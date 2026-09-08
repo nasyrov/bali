@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PROTOTYPE: real Canggu roads in three.js</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #000; font-family: system-ui, sans-serif; }
+  canvas { display: block; }
+  #bar { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); display: flex; gap: 10px; align-items: center;
+         background: #111; color: #fff; border: 2px solid #ff2d95; border-radius: 999px; padding: 8px 14px; font-size: 14px; z-index: 10; }
+  #bar button { background: #ff2d95; color: #fff; border: 0; border-radius: 999px; min-width: 30px; height: 30px; cursor: pointer; font-size: 14px; }
+  #hud { position: fixed; top: 12px; left: 12px; color: #fff; background: rgba(0,0,0,.55); padding: 8px 12px; border-radius: 6px; font-size: 13px; z-index: 10; line-height: 1.5; white-space: pre; }
+  #road { position: fixed; top: 12px; right: 12px; color: #fff; background: rgba(0,0,0,.55); padding: 8px 12px; border-radius: 6px; font-size: 18px; z-index: 10; }
+</style>
+</head>
+<body>
+<div id="hud"></div>
+<div id="road"></div>
+<div id="bar">
+  <button id="prev">←</button><span id="label"></span><button id="next">→</button>
+  <button id="view">top view</button>
+  <button id="shot" title="save screenshot">📷</button>
+  <span style="opacity:.7">W/S throttle, A/D steer, R reset</span>
+</div>
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/" } }
+</script>
+<script type="module">
+// PROTOTYPE — throwaway. Real OSM roads of Canggu as low-poly ribbons, three width/visibility variants via ?variant=A|B|C.
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ---------- variants ----------
+const BASE = { motorway: 14, motorway_link: 8, trunk: 12, trunk_link: 8, primary: 10, primary_link: 7, secondary: 9, secondary_link: 6, tertiary: 7, tertiary_link: 5,
+  unclassified: 5.5, residential: 5, living_street: 3.5, service: 3.5, track: 3, path: 1.5, footway: 1.5, steps: 1.5, pedestrian: 4, cycleway: 2 };
+const SURF = { asphalt: 0x5a5651, paving_stones: 0x8a8478, concrete: 0x8d8a82, unpaved: 0x9c8560, dirt: 0x8e7350, ground: 0x8e7350, gravel: 0x9a9184, paved: 0x6a6660 };
+const BALI = { motorway: 12, motorway_link: 7, trunk: 8, trunk_link: 6, primary: 6, primary_link: 5, secondary: 5.5, secondary_link: 4.5, tertiary: 4.5, tertiary_link: 4,
+  unclassified: 4, residential: 3.5, living_street: 2.2, service: 2.5, track: 2.5, path: 1.5, footway: 1.2, steps: 1.2, pedestrian: 3, cycleway: 1.5 }; // Canggu medians: secondary 4.5, tertiary 4, residential 3, living_street 1.5
+const VARIANTS = {
+  A: { name: 'Generic widths', note: 'Streets GL style table (secondary 9 m, residential 5 m), width tag ignored, every class rendered, colour by surface', widths: BASE, useTag: false, hide: [], colour: 'surface' },
+  B: { name: 'Bali-calibrated widths', note: 'OSM width tag when present, else Bali medians (secondary 5.5 m, residential 3.5 m, gang 2.2 m); every class; colour by surface', widths: BALI, useTag: true, hide: [], colour: 'surface' },
+  C: { name: 'Drivable only, class colours', note: 'Bali widths, footway/path/steps/pedestrian hidden, tracks kept; colour by class hierarchy instead of surface', widths: BALI, useTag: true, hide: ['footway', 'path', 'steps', 'pedestrian', 'cycleway'], colour: 'class' },
+};
+const keys = Object.keys(VARIANTS), params = new URLSearchParams(location.search);
+const vkey = keys.includes(params.get('variant')) ? params.get('variant') : 'A', V = VARIANTS[vkey];
+document.getElementById('label').textContent = `${vkey} — ${V.name}`;
+const go = k => { params.set('variant', k); location.search = params.toString(); };
+document.getElementById('prev').onclick = () => go(keys[(keys.indexOf(vkey) + 2) % 3]);
+document.getElementById('next').onclick = () => go(keys[(keys.indexOf(vkey) + 1) % 3]);
+
+// ---------- golden hour look (from the art direction ticket) ----------
+const P = { grass: 0x8fae5a, line: 0xe8dcb5, shoulder: 0xbfa77c, scooter: 0xc9573f, seat: 0x2a2622, tyre: 0x1e1c1a, wall: 0xe9dcc2 };
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 0.95;
+renderer.shadowMap.enabled = true;
+document.body.prepend(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xf0d9b0); scene.fog = new THREE.FogExp2(0xf0d9b0, 0.0016);
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.5, 4000);
+const sun = new THREE.DirectionalLight(0xffe6c0, 3); sun.position.set(-300, 220, -200); sun.castShadow = true;
+Object.assign(sun.shadow.camera, { left: -120, right: 120, top: 120, bottom: -120, near: 1, far: 900 }); sun.shadow.mapSize.set(2048, 2048); sun.shadow.bias = -0.0004;
+scene.add(sun, sun.target, new THREE.HemisphereLight(0xe8d6b8, 0x6f8a45, 1.1));
+const std = (color, extra = {}) => new THREE.MeshStandardMaterial({ color, flatShading: true, roughness: 0.95, metalness: 0, ...extra });
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(9000, 9000).rotateX(-Math.PI / 2), std(P.grass)); ground.position.y = -0.05; ground.receiveShadow = true; scene.add(ground);
+
+// ---------- load and project ----------
+const lon0 = 115.1395, lat0 = -8.6448, mPerLon = 111320 * Math.cos(lat0 * Math.PI / 180), mPerLat = 110574;
+const proj = ([lon, lat]) => [(lon - lon0) * mPerLon, -(lat - lat0) * mPerLat];
+const fc = await (await fetch('/data/processed/canggu-roads.geojson')).json();
+const ways = [];
+for (const f of fc.features) {
+  const cls = f.properties.highway; if (!(cls in BASE) || V.hide.includes(cls)) continue;
+  const pts = f.geometry.coordinates.map(proj).filter((p, i, a) => i === 0 || Math.hypot(p[0] - a[i - 1][0], p[1] - a[i - 1][1]) > 0.05);
+  if (pts.length < 2) continue;
+  const tag = parseFloat(f.properties.width); ways.push({ cls, pts, name: f.properties.name, surface: f.properties.surface, width: V.useTag && tag >= 1 && tag <= 12 ? tag : V.widths[cls] });
+}
+const RANK = { motorway: 0, trunk: 1, primary: 2, secondary: 3, tertiary: 4, unclassified: 5, residential: 6, living_street: 7, service: 8, track: 9, pedestrian: 10, cycleway: 11, path: 12, footway: 13, steps: 14 };
+const rank = c => RANK[c.replace('_link', '')] ?? 15;
+const CLASSCOL = { 0: 0x4c4a48, 1: 0x4c4a48, 2: 0x524f4c, 3: 0x565350, 4: 0x5a5651, 5: 0x66625c, 6: 0x6f6a63, 7: 0x8a8478, 8: 0x8a8478, 9: 0x9c8560, 10: 0x8d8a82, 11: 0x8d8a82, 12: 0x9c8560, 13: 0x9c8560, 14: 0x9c8560 };
+const colourOf = w => V.colour === 'flat' ? 0x5a5651 : V.colour === 'class' ? CLASSCOL[rank(w.cls)] : (SURF[w.surface] ?? (rank(w.cls) <= 5 ? SURF.asphalt : rank(w.cls) <= 8 ? SURF.paving_stones : SURF.unpaved));
+
+// ---------- ribbon builder: mitred joins, round caps at every node ----------
+function ribbon(pts, width, y, out) {
+  const hw = width / 2, n = pts.length, base = out.pos.length / 3;
+  for (let i = 0; i < n; i++) {
+    const p = pts[i], a = pts[Math.max(i - 1, 0)], b = pts[Math.min(i + 1, n - 1)];
+    let dx = b[0] - a[0], dz = b[1] - a[1]; const l = Math.hypot(dx, dz) || 1; dx /= l; dz /= l;
+    let nx = -dz, nz = dx, s = 1;
+    if (i > 0 && i < n - 1) { // mitre: average of neighbouring segment normals, scaled by 1/cos(half angle), capped
+      let d1x = p[0] - a[0], d1z = p[1] - a[1], l1 = Math.hypot(d1x, d1z) || 1; d1x /= l1; d1z /= l1;
+      let d2x = b[0] - p[0], d2z = b[1] - p[1], l2 = Math.hypot(d2x, d2z) || 1; d2x /= l2; d2z /= l2;
+      const mx = -(d1z + d2z), mz = d1x + d2x, ml = Math.hypot(mx, mz);
+      if (ml > 1e-4) { nx = mx / ml; nz = mz / ml; s = Math.min(1 / (nx * -d1z + nz * d1x || 1), 2.5); }
+    }
+    out.pos.push(p[0] + nx * hw * s, y, p[1] + nz * hw * s, p[0] - nx * hw * s, y, p[1] - nz * hw * s);
+    if (i < n - 1) { const k = base + i * 2; out.idx.push(k, k + 2, k + 1, k + 1, k + 2, k + 3); }
+  }
+}
+const groups = new Map(); // colour -> {pos, idx, caps: []}
+let tris = 0, nodes = 0;
+for (const w of ways) {
+  const c = colourOf(w), y = 0.02 + (15 - rank(w.cls)) * 0.004; // higher classes drawn on top
+  const g = groups.get(c) || groups.set(c, { pos: [], idx: [], caps: [], y }).get(c);
+  ribbon(w.pts, w.width, y, g);
+  for (const p of w.pts) g.caps.push(p[0], p[1], w.width / 2); // round cap at every node hides the mitre gaps at junctions
+  nodes += w.pts.length;
+}
+const capGeo = new THREE.CircleGeometry(1, 10).rotateX(-Math.PI / 2);
+for (const [c, g] of groups) {
+  const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(g.pos, 3)); geo.setIndex(g.idx); geo.computeVertexNormals();
+  const m = new THREE.Mesh(geo, std(c)); m.receiveShadow = true; scene.add(m); tris += g.idx.length / 3;
+  const caps = new THREE.InstancedMesh(capGeo, std(c), g.caps.length / 3), M = new THREE.Matrix4();
+  for (let i = 0; i < g.caps.length; i += 3) { M.makeScale(g.caps[i + 2], 1, g.caps[i + 2]).setPosition(g.caps[i], g.y, g.caps[i + 1]); caps.setMatrixAt(i / 3, M); }
+  caps.receiveShadow = true; scene.add(caps); tris += caps.count * 10;
+}
+// centre lines on main roads only
+{
+  const dash = new THREE.BoxGeometry(0.12, 0.01, 1.5), inst = [];
+  for (const w of ways) if (rank(w.cls) <= 4) for (let i = 1; i < w.pts.length; i++) {
+    const [ax, az] = w.pts[i - 1], [bx, bz] = w.pts[i], L = Math.hypot(bx - ax, bz - az), ang = Math.atan2(bx - ax, bz - az);
+    for (let d = 1.5; d < L - 1.5; d += 4) inst.push(ax + (bx - ax) * d / L, az + (bz - az) * d / L, ang);
+  }
+  const im = new THREE.InstancedMesh(dash, std(P.line), inst.length / 3), M = new THREE.Matrix4(), q = new THREE.Quaternion(), ax = new THREE.Vector3(0, 1, 0);
+  for (let i = 0; i < inst.length; i += 3) { q.setFromAxisAngle(ax, inst[i + 2]); M.compose(new THREE.Vector3(inst[i], 0.09, inst[i + 1]), q, new THREE.Vector3(1, 1, 1)); im.setMatrixAt(i / 3, M); }
+  scene.add(im);
+}
+
+// ---------- spatial grid for "which road am I on" ----------
+const CELL = 40, grid = new Map(), key = (x, z) => `${Math.floor(x / CELL)},${Math.floor(z / CELL)}`;
+ways.forEach((w, wi) => { for (let i = 1; i < w.pts.length; i++) { const [ax, az] = w.pts[i - 1], [bx, bz] = w.pts[i];
+  for (let x = Math.min(ax, bx); x <= Math.max(ax, bx) + CELL; x += CELL) for (let z = Math.min(az, bz); z <= Math.max(az, bz) + CELL; z += CELL) { const k = key(x, z); (grid.get(k) || grid.set(k, []).get(k)).push([wi, i]); } } });
+function nearestWay(x, z) {
+  let best = null, bd = 1e9; const cx = Math.floor(x / CELL), cz = Math.floor(z / CELL);
+  for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (const [wi, si] of grid.get(`${cx + i},${cz + j}`) || []) {
+    const w = ways[wi], [ax, az] = w.pts[si - 1], [bx, bz] = w.pts[si], dx = bx - ax, dz = bz - az, t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz || 1)));
+    const d = Math.hypot(x - (ax + dx * t), z - (az + dz * t)); if (d < bd) { bd = d; best = w; }
+  }
+  return [best, bd];
+}
+
+// ---------- bike (kinematic placeholder) ----------
+const bike = new THREE.Group(); scene.add(bike);
+{ const add = (geo, m, x, y, z) => { const o = new THREE.Mesh(geo, m); o.position.set(x, y, z); o.castShadow = true; bike.add(o); return o; };
+  add(new THREE.BoxGeometry(0.5, 0.45, 1.5), std(P.scooter), 0, 0.55, 0); add(new THREE.BoxGeometry(0.42, 0.18, 0.8), std(P.seat), 0, 0.86, -0.2);
+  add(new THREE.BoxGeometry(0.5, 0.45, 0.4), std(P.scooter), 0, 0.85, 0.7).rotation.x = -0.3; add(new THREE.BoxGeometry(0.7, 0.06, 0.06), std(P.seat), 0, 1.1, 0.75);
+  for (const z of [0.75, -0.7]) add(new THREE.CylinderGeometry(0.28, 0.28, 0.16, 12), std(P.tyre), 0, 0.28, z).rotation.z = Math.PI / 2;
+  add(new THREE.BoxGeometry(0.4, 0.6, 0.35), std(P.wall), 0, 1.3, -0.15); add(new THREE.SphereGeometry(0.18, 8, 6), std(P.seat), 0, 1.75, -0.15); }
+const start = proj([115.1580183, -8.64443]); // Jalan Raya Canggu
+const st = { x: start[0], z: start[1], yaw: 0, v: 0 };
+const reset = () => { const [w] = nearestWay(start[0], start[1]); const [ax, az] = w.pts[0], [bx, bz] = w.pts[1]; st.x = ax; st.z = az; st.yaw = Math.atan2(bx - ax, bz - az); st.v = 0; };
+reset();
+const keysDown = {}; addEventListener('keydown', e => { keysDown[e.key.toLowerCase()] = true; if (e.key === 'r') reset(); if (e.key === 'ArrowLeft') document.getElementById('prev').click(); if (e.key === 'ArrowRight') document.getElementById('next').click(); }); addEventListener('keyup', e => keysDown[e.key.toLowerCase()] = false);
+let top = params.get("view") === "top", topH = 260;
+document.getElementById('view').onclick = () => { top = !top; };
+const orbit = new OrbitControls(camera, renderer.domElement); orbit.enabled = false;
+
+function step(dt) {
+  const th = (keysDown.w ? 1 : 0) - (keysDown.s ? 1 : 0), steer = (keysDown.a ? 1 : 0) - (keysDown.d ? 1 : 0);
+  st.v += th * 6 * dt; st.v -= st.v * 0.6 * dt; st.v = Math.max(-3, Math.min(st.v, 16)); // ~58 km/h top
+  st.yaw += steer * st.v * 0.35 * dt / 1.2;
+  st.x += Math.sin(st.yaw) * st.v * dt; st.z += Math.cos(st.yaw) * st.v * dt;
+  bike.position.set(st.x, 0, st.z); bike.rotation.set(0, st.yaw, -steer * Math.min(1, Math.abs(st.v) / 8) * 0.35);
+  sun.position.set(st.x - 300, 220, st.z - 200); sun.target.position.set(st.x, 0, st.z);
+  if (top) { camera.position.set(st.x, topH, st.z + 1); camera.lookAt(st.x, 0, st.z); }
+  else { const back = new THREE.Vector3(st.x - Math.sin(st.yaw) * 7, 3, st.z - Math.cos(st.yaw) * 7); camera.position.lerp(back, 1 - Math.exp(-6 * dt)); camera.lookAt(st.x, 1.2, st.z + 0); }
+  const [w, d] = nearestWay(st.x, st.z);
+  document.getElementById('road').textContent = w ? `${w.name ?? '(unnamed)'} · ${w.cls} · ${w.width.toFixed(1)} m${d > w.width / 2 ? ' · OFF ROAD' : ''}` : '';
+}
+let last = performance.now(), frames = 0, fpsT = 0, fps = 0;
+renderer.setAnimationLoop(() => {
+  const now = performance.now(), dt = Math.min((now - last) / 1000, 0.05); last = now; frames++; fpsT += dt; if (fpsT > 0.5) { fps = frames / fpsT; frames = 0; fpsT = 0; }
+  step(dt); renderer.render(scene, camera);
+  document.getElementById('hud').textContent = `PROTOTYPE ${vkey}: ${V.note}\nways ${ways.length} · nodes ${nodes} · triangles ${(tris / 1000).toFixed(0)}k · draw calls ${renderer.info.render.calls} · ${fps.toFixed(0)} fps\nspeed ${(st.v * 3.6).toFixed(0)} km/h`;
+});
+addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+
+// ---------- screenshot + scripted drive for captures ----------
+document.getElementById('shot').onclick = () => saveShot();
+window.saveShot = async (name) => { name ||= `${vkey}-${top ? 'top' : 'ride'}`; const els = [document.getElementById('bar')]; els.forEach(e => e.hidden = true);
+  renderer.render(scene, camera); const r = await fetch(`/shot?name=${name}&dir=prototypes/osm-roads/screenshots`, { method: 'POST', body: renderer.domElement.toDataURL('image/png') }); els.forEach(e => e.hidden = false); return r.text(); };
+window.setTop = (v, h = 260) => { top = v; topH = h; }; window.drive = (secs, steer = 0) => new Promise(res => { keysDown.w = true; keysDown.a = steer > 0; keysDown.d = steer < 0; setTimeout(() => { keysDown.w = keysDown.a = keysDown.d = false; res(); }, secs * 1000); });
+window.teleport = (lon, lat, yaw) => { const [x, z] = proj([lon, lat]); st.x = x; st.z = z; st.yaw = yaw; st.v = 0; };
+</script>
+</body>
+</html>

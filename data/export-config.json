@@ -1,0 +1,6 @@
+{
+  "attributes": { "type": false, "id": true, "version": false, "changeset": false, "timestamp": false, "uid": false, "user": false, "way_nodes": false },
+  "linear_tags": true,
+  "area_tags": true,
+  "include_tags": ["highway","name","surface","oneway","lanes","width","maxspeed","bridge","tunnel","layer","lit","access","motorcycle","motor_vehicle","junction","ref","smoothness","area"]
+}

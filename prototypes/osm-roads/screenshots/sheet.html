@@ -1,0 +1,7 @@
+<!-- PROTOTYPE helper: open at /prototypes/osm-roads/screenshots/sheet.html to save contact-sheet.png -->
+<body style="margin:0;background:#000"><canvas id=c width=1920 height=1080></canvas><script>
+const names=['A-ride','A-gang','A-junction','B-ride','B-gang','B-junction','C-ride','C-gang','C-junction'];
+const ctx=c.getContext('2d');ctx.font='bold 28px system-ui';
+(async()=>{for(let i=0;i<9;i++){const im=new Image();im.src=names[i]+'.png?'+Date.now();await new Promise((res,rej)=>{im.onload=res;im.onerror=rej;});const x=(i%3)*640,y=Math.floor(i/3)*360;ctx.drawImage(im,x,y,640,360);ctx.fillStyle='rgba(0,0,0,.6)';ctx.fillRect(x,y,220,40);ctx.fillStyle='#fff';ctx.fillText(names[i],x+10,y+29);}
+const r=await fetch('/shot?name=contact-sheet&dir=prototypes/osm-roads/screenshots',{method:'POST',body:c.toDataURL('image/png')});document.title='saved '+await r.text();})();
+</script></body>
