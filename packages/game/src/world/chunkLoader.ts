@@ -26,8 +26,9 @@ export class ChunkLoader {
       worker.onmessage = (event: MessageEvent<ParsedChunk | ParseFailure>) => {
         this.busy.delete(worker);
         const message = event.data;
+        const wasCancelled = this.cancelled.delete(message.key);
         if ('error' in message) console.warn(`Chunk ${message.key} failed to load: ${message.error}`);
-        else if (!this.cancelled.delete(message.key)) this.onReady(message);
+        else if (!wasCancelled) this.onReady(message);
         this.pump();
       };
       this.workers.push(worker);
