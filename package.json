@@ -13,6 +13,7 @@
     "build": "npm run build --workspace @bali-moto/game",
     "preview": "npm run preview --workspace @bali-moto/game",
     "world": "npm run world --workspace @bali-moto/pipeline",
+    "fixture": "npm run fixture --workspace @bali-moto/pipeline",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

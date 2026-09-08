@@ -4,11 +4,20 @@
 // round cap disc. Junctions need no special geometry because the caps of the roads meeting
 // there overlap. Mitre joins are not used: they spike on hairpins.
 //
+// A centreline carries a height at every point, because the ground under a Road is never
+// level: the pipeline flattens the terrain under the Road and then hands the ribbon the
+// heights it sampled back off that flattened ground, so the surface follows it exactly.
+//
 // Builders append into a shared accumulator because a chunk merges every road it holds into
 // one mesh, and allocating per road would dominate the pipeline.
 
 import type { WorldPoint } from './projection.ts';
 import { roadRank, type RoadClass } from './roads.ts';
+
+/** A point on a road centreline: where it lies on the plane and how high the surface is. */
+export interface RibbonPoint extends WorldPoint {
+  y: number;
+}
 
 /** Vertices of a round cap disc; eight reads as round at the widths Bali's roads have. */
 const CAP_SEGMENTS = 8;
@@ -74,8 +83,8 @@ function pushVertex(out: MeshBuilder, x: number, y: number, z: number, colour: n
 }
 
 /** Drop points that repeat, so a zero-length segment never produces a zero-length normal. */
-function distinct(points: readonly WorldPoint[]): WorldPoint[] {
-  const kept: WorldPoint[] = [];
+function distinct(points: readonly RibbonPoint[]): RibbonPoint[] {
+  const kept: RibbonPoint[] = [];
   for (const point of points) {
     const last = kept.at(-1);
     if (last && Math.hypot(point.x - last.x, point.z - last.z) < MIN_SEGMENT_LENGTH) continue;
@@ -95,9 +104,8 @@ function normalOf(a: WorldPoint, b: WorldPoint): { x: number; z: number } {
 /** Append the surface of one road: a quad per segment and a bevel triangle at each bend. */
 export function appendRibbon(
   out: MeshBuilder,
-  centreline: readonly WorldPoint[],
+  centreline: readonly RibbonPoint[],
   width: number,
-  height: number,
   colour: number,
 ): void {
   const points = distinct(centreline);
@@ -112,16 +120,16 @@ export function appendRibbon(
     const b = points[i + 1]!;
     const normal = normalOf(a, b);
 
-    const startLeft = pushVertex(out, a.x + normal.x * half, height, a.z + normal.z * half, colour);
-    const startRight = pushVertex(out, a.x - normal.x * half, height, a.z - normal.z * half, colour);
-    const endLeft = pushVertex(out, b.x + normal.x * half, height, b.z + normal.z * half, colour);
-    const endRight = pushVertex(out, b.x - normal.x * half, height, b.z - normal.z * half, colour);
+    const startLeft = pushVertex(out, a.x + normal.x * half, a.y, a.z + normal.z * half, colour);
+    const startRight = pushVertex(out, a.x - normal.x * half, a.y, a.z - normal.z * half, colour);
+    const endLeft = pushVertex(out, b.x + normal.x * half, b.y, b.z + normal.z * half, colour);
+    const endRight = pushVertex(out, b.x - normal.x * half, b.y, b.z - normal.z * half, colour);
     out.indices.push(startLeft, endLeft, startRight, startRight, endLeft, endRight);
 
     // Bevel the bend: a triangle from the node to the two edges that part company there.
     // Both sides are filled; the one on the inside of the turn falls within the quads.
     if (previousLeft >= 0) {
-      const node = pushVertex(out, a.x, height, a.z, colour);
+      const node = pushVertex(out, a.x, a.y, a.z, colour);
       out.indices.push(node, previousLeft, startLeft, node, startRight, previousRight);
     }
 
@@ -130,31 +138,31 @@ export function appendRibbon(
   }
 }
 
-/** Append a round cap disc at every node of a road. */
+/**
+ * Append a round cap disc at every node of a road. A disc is as wide as the road, so on a
+ * slope a flat one would cut into the ground at one side and hang off it at the other; where
+ * the caller can say how high the surface is at a point, the rim follows it.
+ */
 export function appendCaps(
   out: MeshBuilder,
-  centreline: readonly WorldPoint[],
+  centreline: readonly RibbonPoint[],
   width: number,
-  height: number,
   colour: number,
+  surfaceAt?: (x: number, z: number) => number,
 ): void {
   const points = distinct(centreline);
   const radius = width / 2;
 
   for (const point of points) {
-    const centre = pushVertex(out, point.x, height, point.z, colour);
+    const centre = pushVertex(out, point.x, point.y, point.z, colour);
     let previous = -1;
     let first = -1;
 
     for (let step = 0; step < CAP_SEGMENTS; step++) {
       const angle = (step / CAP_SEGMENTS) * Math.PI * 2;
-      const rim = pushVertex(
-        out,
-        point.x + Math.cos(angle) * radius,
-        height,
-        point.z + Math.sin(angle) * radius,
-        colour,
-      );
+      const x = point.x + Math.cos(angle) * radius;
+      const z = point.z + Math.sin(angle) * radius;
+      const rim = pushVertex(out, x, surfaceAt?.(x, z) ?? point.y, z, colour);
       if (previous >= 0) out.indices.push(centre, previous, rim);
       else first = rim;
       previous = rim;
@@ -188,9 +196,8 @@ function nearJunction(
  * so a road passing through one never looks like it crosses uninterrupted.
  */
 export function buildMarkings(
-  centreline: readonly WorldPoint[],
+  centreline: readonly RibbonPoint[],
   width: number,
-  height: number,
   style: MarkingStyle,
   junctions: readonly WorldPoint[],
 ): MarkingInstance[] {
@@ -198,7 +205,6 @@ export function buildMarkings(
   if (points.length < 2) return [];
 
   const marks: MarkingInstance[] = [];
-  const y = height + MARKING_LIFT;
   const lineWidth = Math.min(0.12, width * 0.05);
 
   for (let i = 0; i < points.length - 1; i++) {
@@ -209,7 +215,14 @@ export function buildMarkings(
     const normal = normalOf(a, b);
 
     if (style.centre === 'solid') {
-      marks.push({ x: (a.x + b.x) / 2, y, z: (a.z + b.z) / 2, angle, length, width: lineWidth });
+      marks.push({
+        x: (a.x + b.x) / 2,
+        y: (a.y + b.y) / 2 + MARKING_LIFT,
+        z: (a.z + b.z) / 2,
+        angle,
+        length,
+        width: lineWidth,
+      });
     }
 
     if (style.centre === 'dashed') {
@@ -218,7 +231,14 @@ export function buildMarkings(
         const x = a.x + (b.x - a.x) * t;
         const z = a.z + (b.z - a.z) * t;
         if (nearJunction(x, z, junctions, width + DASH_LENGTH / 2)) continue;
-        marks.push({ x, y, z, angle, length: DASH_LENGTH, width: lineWidth });
+        marks.push({
+          x,
+          y: a.y + (b.y - a.y) * t + MARKING_LIFT,
+          z,
+          angle,
+          length: DASH_LENGTH,
+          width: lineWidth,
+        });
       }
     }
 
@@ -227,7 +247,7 @@ export function buildMarkings(
       for (const side of [1, -1]) {
         marks.push({
           x: (a.x + b.x) / 2 + normal.x * offset * side,
-          y,
+          y: (a.y + b.y) / 2 + MARKING_LIFT,
           z: (a.z + b.z) / 2 + normal.z * offset * side,
           angle,
           length,
@@ -238,4 +258,128 @@ export function buildMarkings(
   }
 
   return marks;
+}
+
+/** How deep a bridge slab hangs below the deck, and how far it overhangs the ribbon. */
+const BRIDGE_SLAB_DEPTH = 0.8;
+const BRIDGE_SLAB_OVERHANG = 0.3;
+
+/** Railings stand this high above the deck, just inside the kerb. */
+const RAILING_HEIGHT = 0.9;
+const RAILING_LIFT = 0.05;
+
+/** A tunnel portal's clear height under the lintel, its full height and the jamb's width. */
+const PORTAL_CLEARANCE = 3.5;
+const PORTAL_HEIGHT = 4.5;
+const PORTAL_JAMB = 0.6;
+
+/** One point of a vertical face: where it stands and how far up it reaches. */
+export interface WallPoint extends WorldPoint {
+  base: number;
+  top: number;
+}
+
+/** Append a vertical face standing along a polyline, visible from either side. */
+export function appendWall(
+  out: MeshBuilder,
+  profile: readonly WallPoint[],
+  colour: number,
+): void {
+  for (let i = 0; i < profile.length - 1; i++) {
+    const a = profile[i]!;
+    const b = profile[i + 1]!;
+    const foot = pushVertex(out, a.x, a.base, a.z, colour);
+    const head = pushVertex(out, a.x, a.top, a.z, colour);
+    const nextFoot = pushVertex(out, b.x, b.base, b.z, colour);
+    const nextHead = pushVertex(out, b.x, b.top, b.z, colour);
+    out.indices.push(
+      foot, head, nextFoot, nextFoot, head, nextHead,
+      nextFoot, head, foot, nextHead, head, nextFoot,
+    );
+  }
+}
+
+/** The polyline offset sideways, carried up from one lift above the deck to another. */
+function offsetProfile(
+  points: readonly RibbonPoint[],
+  offset: number,
+  base: number,
+  top: number,
+): WallPoint[] {
+  return points.map((point, index) => {
+    const [a, b] = index === 0 ? [points[0]!, points[1]!] : [points[index - 1]!, point];
+    const normal = normalOf(a, b);
+    return {
+      x: point.x + normal.x * offset,
+      z: point.z + normal.z * offset,
+      base: point.y + base,
+      top: point.y + top,
+    };
+  });
+}
+
+/**
+ * Append what carries a bridge deck: the slab hanging under the ribbon and a railing along
+ * each side. The deck itself is the road ribbon, already raised by the pipeline.
+ */
+export function appendBridge(
+  out: MeshBuilder,
+  centreline: readonly RibbonPoint[],
+  width: number,
+  slabColour: number,
+  railingColour: number,
+): void {
+  const points = distinct(centreline);
+  if (points.length < 2) return;
+  const half = width / 2;
+  const slabHalf = half + BRIDGE_SLAB_OVERHANG;
+
+  // The underside of the slab, wound the other way round so it is seen from below.
+  for (let i = 0; i < points.length - 1; i++) {
+    const a = points[i]!;
+    const b = points[i + 1]!;
+    const normal = normalOf(a, b);
+    const under = (point: RibbonPoint, side: number) =>
+      pushVertex(
+        out,
+        point.x + normal.x * slabHalf * side,
+        point.y - BRIDGE_SLAB_DEPTH,
+        point.z + normal.z * slabHalf * side,
+        slabColour,
+      );
+    const [startLeft, startRight, endLeft, endRight] = [under(a, 1), under(a, -1), under(b, 1), under(b, -1)];
+    out.indices.push(startLeft, startRight, endLeft, endLeft, startRight, endRight);
+  }
+
+  for (const side of [1, -1]) {
+    appendWall(out, offsetProfile(points, slabHalf * side, -BRIDGE_SLAB_DEPTH, 0), slabColour);
+    appendWall(out, offsetProfile(points, half * side, RAILING_LIFT, RAILING_HEIGHT), railingColour);
+  }
+}
+
+/**
+ * Append the darkened frame at one mouth of a tunnel: a lintel across the road and a jamb
+ * either side of it. The road itself stays at terrain level and simply runs under the hill.
+ * `inward` is any point further along the tunnel, and only says which way the mouth faces.
+ */
+export function appendTunnelPortal(
+  out: MeshBuilder,
+  mouth: RibbonPoint,
+  inward: WorldPoint,
+  width: number,
+  colour: number,
+): void {
+  const half = width / 2;
+  const normal = normalOf(inward, mouth);
+  const across = (offset: number, base: number, top: number): WallPoint => ({
+    x: mouth.x + normal.x * offset,
+    z: mouth.z + normal.z * offset,
+    base: mouth.y + base,
+    top: mouth.y + top,
+  });
+
+  appendWall(out, [across(-half, PORTAL_CLEARANCE, PORTAL_HEIGHT), across(half, PORTAL_CLEARANCE, PORTAL_HEIGHT)], colour);
+  for (const side of [1, -1]) {
+    appendWall(out, [across(half * side, 0, PORTAL_HEIGHT), across((half + PORTAL_JAMB) * side, 0, PORTAL_HEIGHT)], colour);
+  }
 }

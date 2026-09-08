@@ -18,6 +18,7 @@ function graphOf(roads: { name?: string; points: WorldPoint[]; width?: number }[
     lanes: 2,
     name: road.name,
     bridge: false,
+    tunnel: false,
     layer: 0,
   }));
 

@@ -1,10 +1,10 @@
 // The chase camera: the only camera the game has.
 //
-// It sits on a boom about 6 m behind and 2.5 m above the scooter and is lagged
-// exponentially on both position and heading, so a corner swings rather than snaps. Speed
-// pulls the boom back and widens the field of view; the bike's lean rolls the horizon a few
-// degrees; an impact shakes it briefly. Dragging the mouse orbits the boom for a look
-// around, and letting go lets it swing back behind the bike.
+// It sits on a boom about 6 m behind and 2.5 m above the scooter, riding up and down with the
+// ground the bike is on, and is lagged exponentially on both position and heading, so a corner
+// swings rather than snaps. Speed pulls the boom back and widens the field of view; the bike's
+// lean rolls the horizon a few degrees; an impact shakes it briefly. Dragging the mouse orbits
+// the boom for a look around, and letting go lets it swing back behind the bike.
 
 import type { BikeState } from './bike.ts';
 import type { FreeLook } from './input.ts';
@@ -95,7 +95,7 @@ export class ChaseCamera {
     this.pose.heading = bike.heading;
     this.pose.x = bike.x - Math.sin(bike.heading) * BOOM_DISTANCE;
     this.pose.z = bike.z + Math.cos(bike.heading) * BOOM_DISTANCE;
-    this.pose.y = BOOM_HEIGHT;
+    this.pose.y = bike.y + BOOM_HEIGHT;
     this.pose.pitch = BASE_PITCH;
     this.pose.roll = 0;
     this.pose.fov = BASE_FOV;
@@ -128,7 +128,7 @@ export class ChaseCamera {
     this.shakeStrength *= Math.exp(-SHAKE_DECAY * dt);
     const rattle = Math.sin(this.elapsed * SHAKE_RATE) * this.shakeStrength;
 
-    this.pose.y = BOOM_HEIGHT + rattle * SHAKE_LIFT;
+    this.pose.y = bike.y + BOOM_HEIGHT + rattle * SHAKE_LIFT;
     this.pose.pitch = BASE_PITCH + this.look.pitch;
     this.pose.roll = -bike.lean * ROLL_FRACTION + rattle * SHAKE_ROLL;
     this.pose.fov = BASE_FOV + pace * FOV_WIDENING;

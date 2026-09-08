@@ -1,16 +1,20 @@
 // The world data contract: what the pipeline writes per chunk and the runtime reads back.
 //
-// Two blobs so far. The road blob is the drawable surface — positions, vertex colours,
-// indices and marking instances — with positions relative to the chunk centre so that
-// world-scale coordinates never reach a float. The graph blob is the road network the bike,
-// Traffic and "which Road am I on" queries run on: nodes with their OpenStreetMap ids and
-// edges with the attributes those readers need.
+// Three blobs so far. The terrain blob is the ground: the height grid the Roads were baked
+// onto and the bike rides over, the water surface above it, one land cover class and its
+// palette colour per vertex, the triangles that survived the clip to land, and the terrace
+// walls. The road blob is the drawable surface — positions, vertex colours, indices and
+// marking instances. The graph blob is the road network the bike, Traffic and "which Road am
+// I on" queries run on: nodes with their OpenStreetMap ids and edges with the attributes
+// those readers need. Every position is relative to the chunk centre so that world-scale
+// coordinates never reach a float.
 
 import { encodeSections, readSections, type BlobHeader } from './blob.ts';
 import { chunkKey, type ChunkId } from './chunks.ts';
 import type { WorldPoint } from './projection.ts';
 import type { MarkingInstance, Mesh } from './ribbon.ts';
 import type { RoadClass } from './roads.ts';
+import { TERRAIN_VERTICES, WALL_STRIDE, type TerraceWall, type TerrainGrid } from './terrain.ts';
 
 /** Floats per marking instance: x, y, z, angle, length, width. */
 export const MARKING_STRIDE = 6;
@@ -53,6 +57,7 @@ const CLASSES: RoadClass[] = [
 ];
 
 const BRIDGE_FLAG = 1;
+const TUNNEL_FLAG = 2;
 const NO_NAME = 0xffffffff;
 
 export interface RoadBlob {
@@ -98,6 +103,7 @@ export interface GraphEdge {
   lanes: number;
   name: string | undefined;
   bridge: boolean;
+  tunnel: boolean;
   layer: number;
 }
 
@@ -106,6 +112,56 @@ export interface GraphBlob {
   chunk: ChunkId;
   nodes: GraphNode[];
   edges: GraphEdge[];
+}
+
+export interface TerrainBlob extends TerrainGrid {
+  header: BlobHeader;
+  chunk: ChunkId;
+  /** Palette colour per vertex, three bytes each, in the sRGB the art direction names. */
+  colours: Uint8Array;
+  /** Triangles of the grid; the ones wholly out at sea are not among them. */
+  indices: Uint32Array;
+  /** Terrace walls, packed WALL_STRIDE floats each; read them with readWall. */
+  walls: Float32Array;
+}
+
+/** Pack a chunk's ground: the height grid, what grows on it and the walls that cross it. */
+export function encodeTerrainBlob(
+  chunk: ChunkId,
+  grid: TerrainGrid,
+  colours: Uint8Array,
+  indices: Uint32Array,
+  walls: readonly TerraceWall[],
+): ArrayBuffer {
+  const packed = new Float32Array(walls.length * WALL_STRIDE);
+  for (const [index, wall] of walls.entries()) {
+    packed.set([wall.x1, wall.z1, wall.x2, wall.z2, wall.base, wall.top], index * WALL_STRIDE);
+  }
+
+  return encodeSections({ chunk, counts: [indices.length, walls.length] }, [
+    grid.heights,
+    grid.waterLevels,
+    grid.covers,
+    colours,
+    indices,
+    packed,
+  ]);
+}
+
+export function decodeTerrainBlob(buffer: ArrayBuffer): TerrainBlob {
+  const blob = readSections(buffer);
+  const [indexCount = 0, wallCount = 0] = blob.header.counts;
+
+  return {
+    header: blob.header,
+    chunk: blob.header.chunk,
+    heights: blob.read(Float32Array, TERRAIN_VERTICES),
+    waterLevels: blob.read(Float32Array, TERRAIN_VERTICES),
+    covers: blob.read(Uint8Array, TERRAIN_VERTICES),
+    colours: blob.read(Uint8Array, TERRAIN_VERTICES * 3),
+    indices: blob.read(Uint32Array, indexCount),
+    walls: blob.read(Float32Array, wallCount * WALL_STRIDE),
+  };
 }
 
 /** Pack a chunk's road surface and markings. */
@@ -182,7 +238,7 @@ export function encodeGraphBlob(
     widths[index] = edge.width;
     surfaces[index] = Math.max(0, SURFACES.indexOf(edge.surface as (typeof SURFACES)[number]));
     onewayAndLanes.set([edge.oneway, edge.lanes], index * 2);
-    flags[index] = edge.bridge ? BRIDGE_FLAG : 0;
+    flags[index] = (edge.bridge ? BRIDGE_FLAG : 0) | (edge.tunnel ? TUNNEL_FLAG : 0);
     layers[index] = edge.layer;
     edgeNames[index] = nameIndexOf(edge.name);
   }
@@ -259,6 +315,7 @@ export function decodeGraphBlob(buffer: ArrayBuffer): GraphBlob {
       lanes: onewayAndLanes[index * 2 + 1]!,
       name: nameIndices[index] === NO_NAME ? undefined : names[nameIndices[index]!],
       bridge: (flags[index]! & BRIDGE_FLAG) !== 0,
+      tunnel: (flags[index]! & TUNNEL_FLAG) !== 0,
       layer: layers[index]!,
     };
   });
@@ -268,6 +325,8 @@ export function decodeGraphBlob(buffer: ArrayBuffer): GraphBlob {
 
 /** The runtime's entry point into the world data. */
 export const MANIFEST_FILE = 'manifest.json';
+/** Tier 0 terrain of a chunk: the ground the Roads sit on. */
+export const TERRAIN_BLOB_FILE = 'terrain.t0.bin';
 /** Tier 0 road surface of a chunk. */
 export const ROAD_BLOB_FILE = 'roads.t0.bin';
 /** Road graph of a chunk. */

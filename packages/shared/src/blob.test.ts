@@ -36,7 +36,7 @@ describe('the blob header', () => {
 
   it('writes the same bytes on every machine, whatever its endianness', () => {
     const encoded = new Uint8Array(encodeBlobHeader({ chunk: { i: 1, j: -1 }, counts: [258] }));
-    expect(Array.from(encoded.slice(0, 8))).toEqual([0x42, 0x4d, 0x57, 0x44, 1, 0, 1, 0]);
+    expect(Array.from(encoded.slice(0, 8))).toEqual([0x42, 0x4d, 0x57, 0x44, WORLD_FORMAT_VERSION, 0, 1, 0]);
   });
 
   it('rejects bytes that are not world data', () => {

@@ -1,7 +1,7 @@
 import { chunkCentre, chunkKey, parseChunkKey } from '@bali-moto/shared';
 import * as THREE from 'three';
 import { describe, expect, it, vi } from 'vitest';
-import type { ChunkView } from '../render/roads.ts';
+import type { ChunkView } from '../render/chunk.ts';
 import { REBASE_DISTANCE } from './rebasing.ts';
 import { WorldRoot } from './worldRoot.ts';
 

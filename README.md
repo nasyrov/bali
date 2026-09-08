@@ -12,9 +12,11 @@ npm run world
 npm run dev
 ```
 
-`npm run world` builds the Canggu road network into `world/`, which is not tracked; `npm run
-dev` then serves the game on Vite and that directory alongside it at `/world`, so a fresh
-chunk build is visible on reload.
+`npm run world` builds the Canggu terrain and road network into `world/`, which is not
+tracked; `npm run dev` then serves the game on Vite and that directory alongside it at
+`/world`, so a fresh chunk build is visible on reload. The build shells out to
+[osmium](https://osmcode.org/osmium-tool/) and [GDAL](https://gdal.org), and downloads the
+Copernicus elevation tile it needs into `data/raw/` the first time it runs.
 
 The ride opens on Jalan Raya Canggu facing north. W and S ride and brake, A and D steer,
 shift is the hard brake, R puts you back on the nearest road, and dragging the mouse looks
@@ -36,9 +38,14 @@ around. The arrow keys do what WASD does.
   into versioned world data.
 - `packages/shared` — projection, chunk grid and blob format, shared so that the pipeline
   and the runtime never disagree.
-- `data/` — OpenStreetMap and elevation sources. The bulk extracts are not tracked; see
+- `data/` — OpenStreetMap and elevation sources. The bulk extracts and the downloaded
+  elevation tiles are not tracked; see
   [docs/research/bali-osm-inventory.md](docs/research/bali-osm-inventory.md) to rebuild them.
-  `data/fixtures/` holds the small Canggu block the world data contract test builds.
+  `data/processed/canggu.osm.pbf` is the checked-in 6.6 km sample — roads, land cover,
+  waterways and coastline — with `canggu-land.geojson` the land polygons closed from that
+  coastline. `data/fixtures/` holds the small Canggu block the world data contract test
+  builds, with the elevation cells under it already reprojected so the test needs neither
+  GDAL nor the network.
 - `prototypes/` — throwaway references for the art direction and the road ribbons. Not
   promoted into the game.
 
@@ -53,3 +60,11 @@ aligned to that origin, and everything inside a chunk is stored relative to its 
 
 Code under MIT; hand-made assets under CC BY 4.0. Map data © OpenStreetMap contributors,
 available under the Open Database License.
+
+Elevation is produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence
+and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights
+reserved. The organisations in charge of the Copernicus programme by law or by delegation do
+not incur any liability for any use of the Copernicus WorldDEM-30. The Copernicus Digital
+Elevation Model was accessed from https://registry.opendata.aws/copernicus-dem. The checked-in
+`data/fixtures/canggu-elevation.bin` is a resampled derivative of it, so the same notice
+travels with this repository.

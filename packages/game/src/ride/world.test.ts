@@ -4,16 +4,24 @@
 import {
   RIDE_START,
   RIDE_START_HEADING,
+  TERRAIN_GRID,
+  TERRAIN_VERTICES,
+  WALL_STRIDE,
   WORLD_FORMAT_VERSION,
   chunkCentre,
   chunkKey,
+  landCoverIndex,
+  terrainVertexOffset,
   worldToChunk,
 } from '@bali-moto/shared';
 import type {
   ChunkId,
   GraphBlob,
   GraphEdge,
+  LandCover,
   RoadClass,
+  TerraceWall,
+  TerrainBlob,
   WorldManifest,
   WorldPoint,
 } from '@bali-moto/shared';
@@ -58,6 +66,7 @@ function straightRoad(
     lanes: 2,
     name: options.name ?? 'Jalan Raya Canggu',
     bridge: false,
+    tunnel: false,
     layer: 0,
   };
 
@@ -90,6 +99,57 @@ function worldOnARoad(
   });
   for (const chunk of column) world.addGraph(straightRoad(chunk, options));
   return world;
+}
+
+/**
+ * A chunk of ground, given a rule for its height in the chunk's own local metres. Everything
+ * is dry grass unless the test says otherwise.
+ */
+function terrainChunk(
+  chunk: ChunkId,
+  options: {
+    heightAt?: (x: number, z: number) => number;
+    waterAt?: (x: number, z: number) => number | undefined;
+    cover?: LandCover;
+    walls?: TerraceWall[];
+  } = {},
+): TerrainBlob {
+  const heights = new Float32Array(TERRAIN_VERTICES);
+  const waterLevels = new Float32Array(TERRAIN_VERTICES);
+  const covers = new Uint8Array(TERRAIN_VERTICES).fill(landCoverIndex(options.cover ?? 'grass'));
+
+  for (let row = 0; row < TERRAIN_GRID; row++) {
+    for (let col = 0; col < TERRAIN_GRID; col++) {
+      const vertex = row * TERRAIN_GRID + col;
+      const [x, z] = [terrainVertexOffset(col), terrainVertexOffset(row)];
+      heights[vertex] = options.heightAt?.(x, z) ?? 0;
+      waterLevels[vertex] = options.waterAt?.(x, z) ?? heights[vertex]!;
+    }
+  }
+
+  const walls = new Float32Array((options.walls ?? []).length * WALL_STRIDE);
+  for (const [index, wall] of (options.walls ?? []).entries()) {
+    walls.set([wall.x1, wall.z1, wall.x2, wall.z2, wall.base, wall.top], index * WALL_STRIDE);
+  }
+
+  return {
+    header: { formatVersion: WORLD_FORMAT_VERSION, chunk, counts: [] },
+    chunk,
+    heights,
+    waterLevels,
+    covers,
+    colours: new Uint8Array(TERRAIN_VERTICES * 3),
+    indices: new Uint32Array(0),
+    walls,
+  };
+}
+
+/** Lay the same ground under every chunk of a World built by worldOnARoad. */
+function layGround(world: World, options: Parameters<typeof terrainChunk>[1]): void {
+  const middle = worldToChunk(RIDE_START.x, RIDE_START.z);
+  for (const step of [-1, 0, 1]) {
+    world.addTerrain(terrainChunk({ i: middle.i, j: middle.j + step }, options));
+  }
 }
 
 /** Ride for a while on one held input, at the frame rate the browser runs at. */
@@ -339,5 +399,130 @@ describe('the streaming set', () => {
     world.dropGraph(worldToChunk(world.bike.x, world.bike.z));
     world.tick(IDLE, TICK);
     expect(world.road).toBeUndefined();
+  });
+});
+
+describe('the ground under the Ride', () => {
+  // Chunk-local z runs south, so a height that falls as z rises is a hill to the north, and
+  // the Ride opens facing north.
+  const climb = (grade: number) => (_x: number, z: number) => 100 - z * grade;
+
+  it('puts the bike on the terrain under it as soon as the chunk arrives', () => {
+    const world = worldOnARoad();
+    expect(world.bike.y).toBe(0);
+
+    layGround(world, { heightAt: climb(0.15) });
+    expect(world.bike.y).toBeCloseTo(100, 3);
+
+    // The camera rides up with it, still a boom's height above the bike.
+    world.tick(IDLE, TICK);
+    expect(world.camera.pose.y).toBeGreaterThan(100);
+  });
+
+  it('bleeds speed on a climb held at full throttle', () => {
+    const level = worldOnARoad();
+    const hill = worldOnARoad();
+    layGround(level, {});
+    layGround(hill, { heightAt: climb(0.15) });
+
+    for (const world of [level, hill]) ride(world, 30, { throttle: 1 });
+
+    expect(hill.bike.speed).toBeLessThan(level.bike.speed - 1);
+    expect(hill.bike.speed).toBeGreaterThan(0);
+    expect(level.bike.speed).toBeCloseTo(ASPHALT_TOP_SPEED, 0);
+  });
+
+  it('rolls the bike down a descent with no throttle at all', () => {
+    const level = worldOnARoad();
+    const descent = worldOnARoad();
+    layGround(level, {});
+    layGround(descent, { heightAt: climb(-0.2) });
+
+    for (const world of [level, descent]) ride(world, 10);
+
+    expect(level.bike.speed).toBe(0);
+    expect(descent.bike.speed).toBeGreaterThan(5);
+    expect(descent.bike.z).toBeLessThan(descent.camera.pose.z);
+  });
+
+  it('takes its surface from the land cover the ground carries', () => {
+    const world = worldOnARoad();
+    layGround(world, { cover: 'paddy' });
+    world.bike.x += 30;
+
+    ride(world, 30, { throttle: 1 });
+    expect(world.road).toBeUndefined();
+    expect(world.bike.speed).toBeCloseTo(topSpeedOn('paddy'), 1);
+  });
+
+  it('wades through shallow water at a crawl, but not on a Road', () => {
+    const onTheRoad = worldOnARoad();
+    layGround(onTheRoad, { waterAt: () => 0.4 });
+    onTheRoad.tick(IDLE, TICK);
+    expect(onTheRoad.surface).toEqual(surfaceOf('asphalt'));
+
+    const world = worldOnARoad();
+    layGround(world, { waterAt: () => 0.4 });
+    world.bike.x += 30;
+
+    ride(world, 20, { throttle: 1 });
+    expect(world.surface).toEqual(surfaceOf('shallow_water'));
+    expect(world.bike.speed).toBeCloseTo(topSpeedOn('shallow_water'), 1);
+  });
+
+  /** How far south of where worldOnARoad opens a Ride got, in metres. */
+  function ridden(world: World): number {
+    return world.bike.z - chunkCentre(worldToChunk(RIDE_START.x, RIDE_START.z)).z;
+  }
+
+  it('halts in deep water and nudges the bike back the way it came', () => {
+    const water = worldOnARoad();
+    const dry = worldOnARoad();
+    // Dry north of the middle of the chunk, and water too deep to ride south of it.
+    layGround(water, { waterAt: (_x, z) => (z > 0 ? 3 : undefined) });
+    layGround(dry, {});
+
+    // Off the road and into the paddies, since a Road is a Road however deep the ford on it.
+    for (const world of [water, dry]) {
+      world.bike.x += 30;
+      world.bike.heading = Math.PI;
+      ride(world, 10, { throttle: 1 });
+    }
+
+    // Nudged back out onto the dry side and never able to get going, while the dry Ride is
+    // long gone down the road.
+    expect(ridden(water)).toBeLessThan(1);
+    expect(water.bike.speed).toBeLessThan(dry.bike.speed / 5);
+    expect(ridden(dry)).toBeGreaterThan(60);
+  });
+
+  it('will not ride through the face of a terrace wall', () => {
+    const terraced = worldOnARoad();
+    const open = worldOnARoad();
+    // A wall across the road 20 m ahead of the bike, standing on the step above it.
+    layGround(terraced, { walls: [{ x1: -50, z1: 20, x2: 50, z2: 20, base: 0, top: 1.5 }] });
+    layGround(open, {});
+
+    for (const world of [terraced, open]) {
+      world.bike.x += 30;
+      world.bike.heading = Math.PI;
+      ride(world, 10, { throttle: 1 });
+    }
+
+    expect(ridden(terraced)).toBeLessThan(20);
+    expect(terraced.bike.speed).toBeLessThan(open.bike.speed / 5);
+    expect(ridden(open)).toBeGreaterThan(60);
+  });
+
+  it('lets the ground go again when its chunk unloads', () => {
+    const world = worldOnARoad();
+    layGround(world, { heightAt: () => 40 });
+    world.tick(IDLE, TICK);
+    expect(world.bike.y).toBe(40);
+
+    world.dropTerrain(worldToChunk(world.bike.x, world.bike.z));
+    world.tick(IDLE, TICK);
+    // Nothing left to stand on, so the bike keeps the last height it was given.
+    expect(world.bike.y).toBe(40);
   });
 });

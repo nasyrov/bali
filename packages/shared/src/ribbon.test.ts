@@ -29,9 +29,14 @@ function covers(builder: MeshBuilder, x: number, z: number): boolean {
   return false;
 }
 
+/** A centreline lying flat at the test height, which is how a ribbon is given its ground. */
+function level(points: [number, number][]): { x: number; y: number; z: number }[] {
+  return points.map(([x, z]) => ({ x, y: HEIGHT, z }));
+}
+
 function ribbonOf(points: [number, number][], width: number): MeshBuilder {
   const builder = createMeshBuilder();
-  appendRibbon(builder, points.map(([x, z]) => ({ x, z })), width, HEIGHT, 0x5a5651);
+  appendRibbon(builder, level(points), width, 0x5a5651);
   return builder;
 }
 
@@ -59,7 +64,7 @@ describe('a road ribbon', () => {
 
   it('carries the road colour on every vertex', () => {
     const builder = createMeshBuilder();
-    appendRibbon(builder, [{ x: 0, z: 0 }, { x: 10, z: 0 }], 4, HEIGHT, 0x8a8478);
+    appendRibbon(builder, level([[0, 0], [10, 0]]), 4, 0x8a8478);
     const { colours, positions } = finishMesh(builder);
     expect(colours.length).toBe(positions.length);
     expect([colours[0], colours[1], colours[2]]).toEqual([0x8a, 0x84, 0x78]);
@@ -105,8 +110,8 @@ describe('a road ribbon', () => {
 describe('round caps', () => {
   it('round the road off half a width beyond its end node', () => {
     const builder = createMeshBuilder();
-    const points = [{ x: 0, z: 0 }, { x: 100, z: 0 }];
-    appendCaps(builder, points, 10, HEIGHT, 0x5a5651);
+    const points = level([[0, 0], [100, 0]]);
+    appendCaps(builder, points, 10, 0x5a5651);
 
     expect(covers(builder, 103, 0)).toBe(true);
     expect(covers(builder, 100, 4)).toBe(true);
@@ -115,7 +120,7 @@ describe('round caps', () => {
 
   it('caps every node, so overlapping discs close the gaps where roads meet', () => {
     const builder = createMeshBuilder();
-    appendCaps(builder, [{ x: 0, z: 0 }, { x: 50, z: 0 }, { x: 50, z: 50 }], 10, HEIGHT, 0x5a5651);
+    appendCaps(builder, level([[0, 0], [50, 0], [50, 50]]), 10, 0x5a5651);
     expect(covers(builder, 52, -2)).toBe(true);
   });
 });
@@ -139,13 +144,13 @@ describe('markingStyleFor', () => {
 });
 
 describe('buildMarkings', () => {
-  const long: { x: number; z: number }[] = [
-    { x: 0, z: 0 },
-    { x: 200, z: 0 },
-  ];
+  const long = level([
+    [0, 0],
+    [200, 0],
+  ]);
 
   it('lays dashes along the centre of the road, above its surface', () => {
-    const dashes = buildMarkings(long, 6, HEIGHT, { centre: 'dashed', edges: false }, []);
+    const dashes = buildMarkings(long, 6, { centre: 'dashed', edges: false }, []);
     expect(dashes.length).toBeGreaterThan(10);
     for (const dash of dashes) {
       expect(dash.z).toBeCloseTo(0, 6);
@@ -156,7 +161,7 @@ describe('buildMarkings', () => {
   });
 
   it('runs a solid centre line as one mark per segment', () => {
-    const [line, ...rest] = buildMarkings(long, 6, HEIGHT, { centre: 'solid', edges: false }, []);
+    const [line, ...rest] = buildMarkings(long, 6, { centre: 'solid', edges: false }, []);
     expect(rest).toEqual([]);
     expect(line!.length).toBeCloseTo(200, 6);
   });
@@ -164,7 +169,7 @@ describe('buildMarkings', () => {
   // Dashes through a junction read as a road crossing another, so they stop short of one.
   it('stops the dashes within one road width of a junction', () => {
     const junction = { x: 100, z: 0 };
-    const dashes = buildMarkings(long, 6, HEIGHT, { centre: 'dashed', edges: false }, [junction]);
+    const dashes = buildMarkings(long, 6, { centre: 'dashed', edges: false }, [junction]);
 
     for (const dash of dashes) {
       expect(Math.abs(dash.x - junction.x)).toBeGreaterThan(6 - dash.length / 2);
@@ -174,7 +179,7 @@ describe('buildMarkings', () => {
   });
 
   it('lays edge lines just inside both kerbs when the class has them', () => {
-    const marks = buildMarkings(long, 6, HEIGHT, { centre: 'none', edges: true }, []);
+    const marks = buildMarkings(long, 6, { centre: 'none', edges: true }, []);
     const offsets = marks.map((mark) => mark.z).sort((a, b) => a - b);
 
     expect(marks).toHaveLength(2);
@@ -184,6 +189,6 @@ describe('buildMarkings', () => {
   });
 
   it('marks nothing on an unmarked class', () => {
-    expect(buildMarkings(long, 6, HEIGHT, { centre: 'none', edges: false }, [])).toEqual([]);
+    expect(buildMarkings(long, 6, { centre: 'none', edges: false }, [])).toEqual([]);
   });
 });

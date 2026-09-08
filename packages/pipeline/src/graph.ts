@@ -40,6 +40,7 @@ export interface RoadWay {
   lanes: number;
   name: string | undefined;
   bridge: boolean;
+  tunnel: boolean;
   layer: number;
   /** Whether this is a Path: rendered and rideable, but never part of the road graph. */
   path: boolean;
@@ -78,6 +79,7 @@ export function buildRoadWays(ways: readonly OsmWay[]): RoadWay[] {
     if (way.points.length < 2) continue;
 
     const bridge = way.tags.bridge !== undefined && way.tags.bridge !== 'no';
+    const tunnel = way.tags.tunnel !== undefined && way.tags.tunnel !== 'no';
     const layer = Number.parseInt(way.tags.layer ?? '', 10);
 
     roads.push({
@@ -90,6 +92,7 @@ export function buildRoadWays(ways: readonly OsmWay[]): RoadWay[] {
       lanes: Number.parseInt(way.tags.lanes ?? '', 10) || 1,
       name: way.tags.name,
       bridge,
+      tunnel,
       layer: Number.isFinite(layer) ? layer : bridge ? 1 : 0,
       path: isPath(cls),
       nodeIds: way.nodeIds,
