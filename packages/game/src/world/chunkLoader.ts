@@ -1,8 +1,10 @@
-// Fetching and parsing chunks. A small pool of workers does the parsing, so a chunk arriving
-// never costs the ride a frame; requests are handed to whichever worker is free, nearest
-// first, because that is the order the stream asks for them in.
+// Fetching and parsing chunks: the drawable roads and the road graph together, so a chunk
+// never arrives on screen before the bike can tell which Road it is on. A small pool of
+// workers does the parsing, so a chunk arriving never costs the ride a frame; requests are
+// handed to whichever worker is free, nearest first, because that is the order the stream
+// asks for them in.
 
-import { ROAD_BLOB_FILE, chunkFilePath, chunkKey } from '@bali-moto/shared';
+import { GRAPH_BLOB_FILE, ROAD_BLOB_FILE, chunkFilePath, chunkKey } from '@bali-moto/shared';
 import type { ChunkId } from '@bali-moto/shared';
 import type { ParseFailure, ParsedChunk, ParseRequest } from './chunkWorker.ts';
 
@@ -35,11 +37,15 @@ export class ChunkLoader {
     }
   }
 
-  /** Queue a chunk's road blob for fetching and parsing. */
+  /** Queue a chunk's blobs for fetching and parsing. */
   request(chunk: ChunkId): void {
     const key = chunkKey(chunk);
     this.cancelled.delete(key);
-    this.queue.push({ key, url: `${this.worldRoot}/${chunkFilePath(chunk, ROAD_BLOB_FILE)}` });
+    this.queue.push({
+      key,
+      roadUrl: `${this.worldRoot}/${chunkFilePath(chunk, ROAD_BLOB_FILE)}`,
+      graphUrl: `${this.worldRoot}/${chunkFilePath(chunk, GRAPH_BLOB_FILE)}`,
+    });
     this.pump();
   }
 

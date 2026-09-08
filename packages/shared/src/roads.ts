@@ -114,15 +114,24 @@ export function roadWidth(cls: RoadClass, widthTag: string | undefined): number 
   return WIDTHS[cls];
 }
 
-/** Surface colour: the tag when it is one the palette knows, else the class fallback. */
-export function roadColour(cls: RoadClass, surfaceTag: string | undefined): number {
-  const tagged = surfaceTag === undefined ? undefined : SURFACE_COLOURS[surfaceTag];
-  if (tagged !== undefined) return tagged;
+/**
+ * What a Road is made of: the surface tag when it is one the world knows, else the class
+ * fallback. Main classes are asphalt, gangs and service roads paving stones, tracks and
+ * Paths unpaved. Both the colour it is drawn in and the speed the bike holds on it come
+ * from here, so a road never looks like one surface and rides like another.
+ */
+export function roadSurface(cls: RoadClass, surfaceTag: string | undefined): string {
+  if (surfaceTag !== undefined && surfaceTag in SURFACE_COLOURS) return surfaceTag;
 
   const rank = RANK[cls];
-  if (rank <= RANK.unclassified) return SURFACE_COLOURS.asphalt!;
-  if (rank <= RANK.service) return SURFACE_COLOURS.paving_stones!;
-  return SURFACE_COLOURS.unpaved!;
+  if (rank <= RANK.unclassified) return 'asphalt';
+  if (rank <= RANK.service) return 'paving_stones';
+  return 'unpaved';
+}
+
+/** Surface colour: the tag when it is one the palette knows, else the class fallback. */
+export function roadColour(cls: RoadClass, surfaceTag: string | undefined): number {
+  return SURFACE_COLOURS[roadSurface(cls, surfaceTag)]!;
 }
 
 /** Height above the terrain in metres, so a higher class is drawn over a lower one. */

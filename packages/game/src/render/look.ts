@@ -11,6 +11,10 @@ export const PALETTE = {
   skyZenith: 0x6d9fd0,
   skyHorizon: 0xf0d9b0,
   sun: 0xffe6c0,
+  scooter: 0xd0552f,
+  seat: 0x352f2a,
+  tyre: 0x22201e,
+  rider: 0xe4d9c4,
 } as const;
 
 /**
