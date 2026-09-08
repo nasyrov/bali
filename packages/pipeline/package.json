@@ -1,0 +1,12 @@
+{
+  "name": "@bali-moto/pipeline",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "world": "node --experimental-strip-types src/world.ts"
+  },
+  "dependencies": {
+    "@bali-moto/shared": "*"
+  }
+}

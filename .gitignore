@@ -6,3 +6,8 @@ data/raw/
 data/processed/*.pbf
 data/processed/*.geojsonseq
 data/processed/*.gz
+
+# Pipeline output (world data blobs) and build artefacts
+world/
+*.tsbuildinfo
+coverage/
