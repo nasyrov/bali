@@ -13,6 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # The world data contract test runs the real pipeline, which shells out to osmium.
+      - run: sudo apt-get update && sudo apt-get install -y osmium-tool
       - uses: actions/setup-node@v4
         with:
           node-version: 24

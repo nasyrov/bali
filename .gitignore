@@ -4,10 +4,14 @@ dist/
 # OSM raw and bulk processed data; rebuilt with osmium (see docs/research/bali-osm-inventory.md)
 data/raw/
 data/processed/*.pbf
+# except the Canggu sample, which the world build and the fixture are both cut from
+!data/processed/canggu-roads.osm.pbf
 data/processed/*.geojsonseq
 data/processed/*.gz
 
-# Pipeline output (world data blobs) and build artefacts
-world/
+# Pipeline output (world data blobs) and build artefacts; anchored to the repository root so
+# it cannot swallow a source directory that happens to be called world
+/world/
 *.tsbuildinfo
 coverage/
+.world-build/

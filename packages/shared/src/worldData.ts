@@ -7,13 +7,13 @@
 // edges with the attributes those readers need.
 
 import { encodeSections, readSections, type BlobHeader } from './blob.ts';
-import type { ChunkId } from './chunks.ts';
+import { chunkKey, type ChunkId } from './chunks.ts';
 import type { WorldPoint } from './projection.ts';
 import type { MarkingInstance, Mesh } from './ribbon.ts';
 import type { RoadClass } from './roads.ts';
 
 /** Floats per marking instance: x, y, z, angle, length, width. */
-const MARKING_STRIDE = 6;
+export const MARKING_STRIDE = 6;
 
 /** Surfaces an edge may carry, in blob order; index 0 means the way had no surface tag. */
 const SURFACES = [
@@ -61,7 +61,21 @@ export interface RoadBlob {
   positions: Float32Array;
   colours: Uint8Array;
   indices: Uint32Array;
-  markings: MarkingInstance[];
+  /** Marking instances, packed MARKING_STRIDE floats each; read them with readMarking. */
+  markings: Float32Array;
+}
+
+/** One marking out of a road blob's packed instance data. */
+export function readMarking(markings: Float32Array, index: number): MarkingInstance {
+  const at = index * MARKING_STRIDE;
+  return {
+    x: markings[at]!,
+    y: markings[at + 1]!,
+    z: markings[at + 2]!,
+    angle: markings[at + 3]!,
+    length: markings[at + 4]!,
+    width: markings[at + 5]!,
+  };
 }
 
 export interface GraphNode {
@@ -121,20 +135,7 @@ export function decodeRoadBlob(buffer: ArrayBuffer): RoadBlob {
   const positions = blob.read(Float32Array, vertexCount * 3);
   const colours = blob.read(Uint8Array, vertexCount * 3);
   const indices = blob.read(Uint32Array, indexCount);
-  const packed = blob.read(Float32Array, markingCount * MARKING_STRIDE);
-
-  const markings: MarkingInstance[] = [];
-  for (let index = 0; index < markingCount; index++) {
-    const at = index * MARKING_STRIDE;
-    markings.push({
-      x: packed[at]!,
-      y: packed[at + 1]!,
-      z: packed[at + 2]!,
-      angle: packed[at + 3]!,
-      length: packed[at + 4]!,
-      width: packed[at + 5]!,
-    });
-  }
+  const markings = blob.read(Float32Array, markingCount * MARKING_STRIDE);
 
   return { header: blob.header, chunk: blob.header.chunk, positions, colours, indices, markings };
 }
@@ -146,10 +147,14 @@ export function encodeGraphBlob(
   edges: readonly GraphEdge[],
 ): ArrayBuffer {
   const names: string[] = [];
+  const nameIndices = new Map<string, number>();
   const nameIndexOf = (name: string | undefined) => {
     if (name === undefined) return NO_NAME;
-    const existing = names.indexOf(name);
-    return existing >= 0 ? existing : names.push(name) - 1;
+    const existing = nameIndices.get(name);
+    if (existing !== undefined) return existing;
+    const index = names.push(name) - 1;
+    nameIndices.set(name, index);
+    return index;
   };
 
   const nodeIds = Float64Array.from(nodes, (node) => node.id);
@@ -164,20 +169,22 @@ export function encodeGraphBlob(
   const onewayAndLanes = new Int8Array(edges.length * 2);
   const flags = new Uint8Array(edges.length);
   const layers = new Int8Array(edges.length);
-  const nameIndices = new Uint32Array(edges.length);
+  const edgeNames = new Uint32Array(edges.length);
 
   let pointCount = 0;
   for (const [index, edge] of edges.entries()) {
     edgeNodes.set(edge.nodes, index * 2);
     pointStarts[index] = pointCount;
     pointCount += edge.points.length;
-    classes[index] = CLASSES.indexOf(edge.cls);
+    const classIndex = CLASSES.indexOf(edge.cls);
+    if (classIndex < 0) throw new Error(`Road class ${edge.cls} has no place in the blob format`);
+    classes[index] = classIndex;
     widths[index] = edge.width;
     surfaces[index] = Math.max(0, SURFACES.indexOf(edge.surface as (typeof SURFACES)[number]));
     onewayAndLanes.set([edge.oneway, edge.lanes], index * 2);
     flags[index] = edge.bridge ? BRIDGE_FLAG : 0;
     layers[index] = edge.layer;
-    nameIndices[index] = nameIndexOf(edge.name);
+    edgeNames[index] = nameIndexOf(edge.name);
   }
   pointStarts[edges.length] = pointCount;
 
@@ -201,7 +208,7 @@ export function encodeGraphBlob(
       pointStarts,
       points,
       widths,
-      nameIndices,
+      edgeNames,
       classes,
       surfaces,
       onewayAndLanes,
@@ -257,4 +264,27 @@ export function decodeGraphBlob(buffer: ArrayBuffer): GraphBlob {
   });
 
   return { header: blob.header, chunk: blob.header.chunk, nodes, edges };
+}
+
+/** The runtime's entry point into the world data. */
+export const MANIFEST_FILE = 'manifest.json';
+/** Tier 0 road surface of a chunk. */
+export const ROAD_BLOB_FILE = 'roads.t0.bin';
+/** Road graph of a chunk. */
+export const GRAPH_BLOB_FILE = 'graph.bin';
+
+export interface WorldManifest {
+  /** Blob format version; the runtime refuses world data it cannot read. */
+  formatVersion: number;
+  /** When the OpenStreetMap extract this world was built from was cut. */
+  extractTimestamp: string;
+  /** Chunk edge length in metres, so the runtime can check it agrees with the build. */
+  chunkSize: number;
+  /** Chunk key to file name to byte size, for the streaming byte budget. */
+  chunks: Record<string, Record<string, number>>;
+}
+
+/** Where a chunk's file lives, relative to the world data root. */
+export function chunkFilePath(chunk: ChunkId, file: string): string {
+  return `${chunkKey(chunk)}/${file}`;
 }

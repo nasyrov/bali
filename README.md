@@ -8,11 +8,16 @@ missions, no fail state — see [the spec](.scratch/bali-moto/spec.md) and the g
 
 ```bash
 npm install
+npm run world
 npm run dev
 ```
 
-`npm run dev` serves the game on Vite and the pipeline's `world/` output alongside it at
-`/world`, so a fresh chunk build is visible on reload.
+`npm run world` builds the Canggu road network into `world/`, which is not tracked; `npm run
+dev` then serves the game on Vite and that directory alongside it at `/world`, so a fresh
+chunk build is visible on reload.
+
+The camera opens above Jalan Raya Canggu. Fly with WASD, Q and E for down and up, shift to go
+faster, and click to look around.
 
 | Command             | What it does                                                     |
 | ------------------- | ---------------------------------------------------------------- |
@@ -20,7 +25,8 @@ npm run dev
 | `npm run build`     | Static site into `dist/`; world data publishes beside it           |
 | `npm test`          | Vitest across every package                                        |
 | `npm run typecheck` | TypeScript across the whole workspace                              |
-| `npm run world`     | Build the world data from the sources in `data/`                   |
+| `npm run world`     | Build the world data into `world/` from the sources in `data/`     |
+| `npm run fixture`   | Rebuild the checked-in Canggu test fixture with osmium              |
 
 ## Layout
 
@@ -31,6 +37,7 @@ npm run dev
   and the runtime never disagree.
 - `data/` — OpenStreetMap and elevation sources. The bulk extracts are not tracked; see
   [docs/research/bali-osm-inventory.md](docs/research/bali-osm-inventory.md) to rebuild them.
+  `data/fixtures/` holds the small Canggu block the world data contract test builds.
 - `prototypes/` — throwaway references for the art direction and the road ribbons. Not
   promoted into the game.
 
