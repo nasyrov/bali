@@ -29,7 +29,9 @@ export function chunkKey(chunk: ChunkId): string {
   return `x${chunk.i}_z${chunk.j}`;
 }
 
-const KEY_PATTERN = /^x(-?\d+)_z(-?\d+)$/;
+// Exactly one spelling per chunk: no leading zeros and no negative zero, so that two keys
+// naming the same chunk can never differ as strings in the manifest.
+const KEY_PATTERN = /^x(0|-?[1-9]\d*)_z(0|-?[1-9]\d*)$/;
 
 /** The chunk a key names. Throws when the key is malformed. */
 export function parseChunkKey(key: string): ChunkId {
