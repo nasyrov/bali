@@ -62,4 +62,10 @@ describe('chunkKey', () => {
     expect(() => parseChunkKey('x1_y2_z3')).toThrow();
     expect(() => parseChunkKey('x1.5_y2')).toThrow();
   });
+
+  it('gives a chunk exactly one spelling, so manifest keys compare as strings', () => {
+    for (const key of ['x007_z1', 'x-0_z0', 'x7_z01']) {
+      expect(() => parseChunkKey(key)).toThrow();
+    }
+  });
 });
