@@ -56,6 +56,8 @@ function serveWorldData(): Plugin {
 
 export default defineConfig({
   plugins: [serveWorldData()],
+  // PORT lets a second checkout of the repository be served alongside the first.
+  server: { port: Number(process.env.PORT) || 5173 },
   // The site builds to the repository root's dist/, where the deploy publishes the world
   // data beside it under the same /world path the dev server serves.
   build: { outDir: resolve(repoRoot, 'dist'), emptyOutDir: true, target: 'es2022' },

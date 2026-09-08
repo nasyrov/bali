@@ -1,8 +1,11 @@
-// Parses one chunk's road blob off the main thread and hands the typed arrays over without
-// copying them: every array is a view onto the one buffer that was fetched, so transferring
-// that buffer moves all of them at once.
+// Parses one chunk off the main thread: the drawable road surface and the road graph the
+// bike rides on. The surface's typed arrays are handed over without copying, since every
+// one of them is a view onto the single buffer that was fetched, so transferring that buffer
+// moves all of them at once. The graph is small and becomes plain objects, which the
+// structured clone carries.
 
-import { decodeRoadBlob } from '@bali-moto/shared';
+import { decodeGraphBlob, decodeRoadBlob } from '@bali-moto/shared';
+import type { GraphBlob } from '@bali-moto/shared';
 
 /**
  * The palette, and so the colours baked into a road blob, is sRGB; three.js reads a vertex
@@ -17,7 +20,8 @@ const SRGB_TO_LINEAR = Uint8Array.from({ length: 256 }, (_, value) => {
 
 export interface ParseRequest {
   key: string;
-  url: string;
+  roadUrl: string;
+  graphUrl: string;
 }
 
 export interface ParsedChunk {
@@ -26,6 +30,7 @@ export interface ParsedChunk {
   colours: Uint8Array;
   indices: Uint32Array;
   markings: Float32Array;
+  graph: GraphBlob;
   bytes: number;
 }
 
@@ -34,15 +39,19 @@ export interface ParseFailure {
   error: string;
 }
 
+async function fetchBlob(url: string): Promise<ArrayBuffer> {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`${url}: ${response.status} ${response.statusText}`);
+  return response.arrayBuffer();
+}
+
 self.onmessage = async (event: MessageEvent<ParseRequest>) => {
-  const { key, url } = event.data;
+  const { key, roadUrl, graphUrl } = event.data;
 
   try {
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+    const [roadBuffer, graphBuffer] = await Promise.all([fetchBlob(roadUrl), fetchBlob(graphUrl)]);
 
-    const buffer = await response.arrayBuffer();
-    const { positions, colours, indices, markings } = decodeRoadBlob(buffer);
+    const { positions, colours, indices, markings } = decodeRoadBlob(roadBuffer);
     for (let index = 0; index < colours.length; index++) colours[index] = SRGB_TO_LINEAR[colours[index]!]!;
     const parsed: ParsedChunk = {
       key,
@@ -50,9 +59,10 @@ self.onmessage = async (event: MessageEvent<ParseRequest>) => {
       colours,
       indices,
       markings,
-      bytes: buffer.byteLength,
+      graph: decodeGraphBlob(graphBuffer),
+      bytes: roadBuffer.byteLength + graphBuffer.byteLength,
     };
-    self.postMessage(parsed, { transfer: [buffer] });
+    self.postMessage(parsed, { transfer: [roadBuffer] });
   } catch (error) {
     const failure: ParseFailure = { key, error: error instanceof Error ? error.message : String(error) };
     self.postMessage(failure);

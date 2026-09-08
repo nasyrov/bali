@@ -12,11 +12,16 @@ import {
   decodeGraphBlob,
   decodeRoadBlob,
   MARKING_STRIDE,
+  RIDE_START,
+  RIDE_START_ROAD,
+  chunkCentre,
+  chunkKey,
   parseChunkKey,
   readMarking,
   roadWidth,
+  worldToChunk,
 } from '@bali-moto/shared';
-import type { GraphBlob, WorldManifest } from '@bali-moto/shared';
+import type { GraphBlob, WorldManifest, WorldPoint } from '@bali-moto/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { fixtureBuild } from './config.ts';
 import { buildWorld, type WorldBuildResult } from './world.ts';
@@ -35,6 +40,18 @@ function readBlob(chunk: string, file: string): ArrayBuffer {
 
 function graphOf(chunk: string): GraphBlob {
   return decodeGraphBlob(readBlob(chunk, GRAPH_BLOB_FILE));
+}
+
+/** How far a point lies from a road segment, both in the same chunk's local metres. */
+function distanceToSegment(point: WorldPoint, from: WorldPoint, to: WorldPoint): number {
+  const dx = to.x - from.x;
+  const dz = to.z - from.z;
+  const lengthSquared = dx * dx + dz * dz;
+  const along =
+    lengthSquared === 0
+      ? 0
+      : Math.max(0, Math.min(1, ((point.x - from.x) * dx + (point.z - from.z) * dz) / lengthSquared));
+  return Math.hypot(point.x - (from.x + dx * along), point.z - (from.z + dz * along));
 }
 
 beforeAll(async () => {
@@ -140,6 +157,25 @@ describe('the road graph', () => {
     const tagged = named.filter((edge) => edge.width < roadWidth('secondary', undefined));
     expect(tagged.length).toBeGreaterThan(named.length / 2);
     expect(tagged.some((edge) => edge.width === 5)).toBe(true);
+  });
+
+  // The runtime opens the first Ride on this exact point, so the road had better be there.
+  it('lays Jalan Raya Canggu under the point the first Ride starts on', () => {
+    const chunk = worldToChunk(RIDE_START.x, RIDE_START.z);
+    const centre = chunkCentre(chunk);
+    const start = { x: RIDE_START.x - centre.x, z: RIDE_START.z - centre.z };
+
+    let nearest: { name: string | undefined; width: number; distance: number } | undefined;
+    for (const edge of graphOf(chunkKey(chunk)).edges) {
+      for (let index = 1; index < edge.points.length; index++) {
+        const distance = distanceToSegment(start, edge.points[index - 1]!, edge.points[index]!);
+        if (nearest && distance >= nearest.distance) continue;
+        nearest = { name: edge.name, width: edge.width, distance };
+      }
+    }
+
+    expect(nearest?.name).toBe(RIDE_START_ROAD);
+    expect(nearest!.distance).toBeLessThan(nearest!.width / 2);
   });
 
   it('reaches every edge from its own nodes, so nothing is orphaned', () => {

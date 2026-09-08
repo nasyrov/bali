@@ -5,6 +5,7 @@ import {
   isPath,
   roadClassOf,
   roadColour,
+  roadSurface,
   roadHeight,
   roadWidth,
 } from './roads.ts';
@@ -78,6 +79,19 @@ describe('roadWidth', () => {
 
   it('gives a link a narrower default than the road it leaves', () => {
     expect(roadWidth('trunk_link', undefined)).toBeLessThan(roadWidth('trunk', undefined));
+  });
+});
+
+describe('roadSurface', () => {
+  it('takes the surface tag when the world knows that surface', () => {
+    expect(roadSurface('residential', 'asphalt')).toBe('asphalt');
+    expect(roadSurface('living_street', 'paving_stones')).toBe('paving_stones');
+  });
+
+  it('falls back to the class when the tag is missing or nobody mapped it', () => {
+    expect(roadSurface('trunk', undefined)).toBe('asphalt');
+    expect(roadSurface('residential', 'sett')).toBe('paving_stones');
+    expect(roadSurface('track', undefined)).toBe('unpaved');
   });
 });
 

@@ -3,5 +3,6 @@ export * from './projection.ts';
 export * from './chunks.ts';
 export * from './blob.ts';
 export * from './roads.ts';
+export * from './ride.ts';
 export * from './ribbon.ts';
 export * from './worldData.ts';

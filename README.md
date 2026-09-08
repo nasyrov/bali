@@ -16,8 +16,9 @@ npm run dev
 dev` then serves the game on Vite and that directory alongside it at `/world`, so a fresh
 chunk build is visible on reload.
 
-The camera opens above Jalan Raya Canggu. Fly with WASD, Q and E for down and up, shift to go
-faster, and click to look around.
+The ride opens on Jalan Raya Canggu facing north. W and S ride and brake, A and D steer,
+shift is the hard brake, R puts you back on the nearest road, and dragging the mouse looks
+around. The arrow keys do what WASD does.
 
 | Command             | What it does                                                     |
 | ------------------- | ---------------------------------------------------------------- |
