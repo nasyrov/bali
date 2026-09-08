@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { WORLD_FORMAT_VERSION } from './blob.ts';
-import { decodeGraphBlob, decodeRoadBlob, encodeGraphBlob, encodeRoadBlob } from './worldData.ts';
+import {
+  MARKING_STRIDE,
+  decodeGraphBlob,
+  decodeRoadBlob,
+  encodeGraphBlob,
+  encodeRoadBlob,
+  readMarking,
+} from './worldData.ts';
 import type { GraphEdge, GraphNode } from './worldData.ts';
 
 const chunk = { i: 9, j: 21 };
@@ -20,10 +27,11 @@ describe('the road blob', () => {
     expect(decoded.positions).toEqual(mesh.positions);
     expect(decoded.colours).toEqual(mesh.colours);
     expect(decoded.indices).toEqual(mesh.indices);
-    expect(decoded.markings).toHaveLength(1);
-    expect(decoded.markings[0]).toEqual(
-      Object.fromEntries(Object.entries(markings[0]!).map(([key, value]) => [key, expect.closeTo(value, 5)])),
-    );
+    expect(decoded.markings).toHaveLength(MARKING_STRIDE);
+    const mark = readMarking(decoded.markings, 0);
+    for (const [key, value] of Object.entries(markings[0]!)) {
+      expect(mark[key as keyof typeof mark]).toBeCloseTo(value, 5);
+    }
   });
 
   it('states its counts in the header, so a reader can size buffers before parsing', () => {
@@ -34,7 +42,7 @@ describe('the road blob', () => {
 
   it('round-trips a chunk whose roads carry no markings', () => {
     const decoded = decodeRoadBlob(encodeRoadBlob(chunk, mesh, []));
-    expect(decoded.markings).toEqual([]);
+    expect(decoded.markings).toHaveLength(0);
     expect(decoded.indices).toEqual(mesh.indices);
   });
 });
