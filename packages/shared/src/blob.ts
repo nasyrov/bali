@@ -48,10 +48,13 @@ export interface BlobHeaderInput {
   counts: readonly number[];
 }
 
+function align(bytes: number): number {
+  return Math.ceil(bytes / ALIGNMENT) * ALIGNMENT;
+}
+
 /** Byte length of a header carrying this many counts, padding included. */
 export function blobHeaderByteLength(countCount: number): number {
-  const bytes = FIXED_HEADER_BYTES + 4 * countCount;
-  return Math.ceil(bytes / ALIGNMENT) * ALIGNMENT;
+  return align(FIXED_HEADER_BYTES + 4 * countCount);
 }
 
 /** Encode a header on its own, padded so that a payload may follow it directly. */
@@ -110,26 +113,59 @@ export function decodeBlobHeader(buffer: ArrayBuffer): { header: BlobHeader; byt
   };
 }
 
-/** Encode a header followed by the payload arrays, back to back, in order. */
-export function encodeBlob(header: BlobHeaderInput, payload: readonly ArrayBufferView[]): ArrayBuffer {
-  const headerBytes = encodeBlobHeader(header);
-  const payloadBytes = payload.reduce((total, part) => total + part.byteLength, 0);
+/** A typed array constructor a section may be read back as. */
+interface TypedArrayConstructor<T> {
+  new (buffer: ArrayBuffer, byteOffset: number, length: number): T;
+  BYTES_PER_ELEMENT: number;
+}
 
-  const buffer = new ArrayBuffer(headerBytes.byteLength + payloadBytes);
+/**
+ * Encode a header followed by the sections, each padded to the next eight-byte boundary so
+ * that a typed array view onto any of them is aligned however long the one before it was.
+ */
+export function encodeSections(
+  header: BlobHeaderInput,
+  sections: readonly ArrayBufferView[],
+): ArrayBuffer {
+  const headerBytes = encodeBlobHeader(header);
+  const total = sections.reduce((offset, part) => align(offset + part.byteLength), headerBytes.byteLength);
+
+  const buffer = new ArrayBuffer(total);
   const bytes = new Uint8Array(buffer);
   bytes.set(new Uint8Array(headerBytes), 0);
 
   let offset = headerBytes.byteLength;
-  for (const part of payload) {
+  for (const part of sections) {
     bytes.set(new Uint8Array(part.buffer, part.byteOffset, part.byteLength), offset);
-    offset += part.byteLength;
+    offset = align(offset + part.byteLength);
   }
 
   return buffer;
 }
 
-/** Decode a blob into its header and a view onto its payload, without copying. */
-export function decodeBlob(buffer: ArrayBuffer): { header: BlobHeader; payload: Uint8Array } {
+export interface SectionedBlob {
+  header: BlobHeader;
+  /** Read the next section as a view onto the blob, without copying its bytes. */
+  read: <T>(Ctor: TypedArrayConstructor<T>, length: number) => T;
+}
+
+/** Decode a blob's header and hand back a reader that walks its sections in order. */
+export function readSections(buffer: ArrayBuffer): SectionedBlob {
   const { header, byteLength } = decodeBlobHeader(buffer);
-  return { header, payload: new Uint8Array(buffer, byteLength, buffer.byteLength - byteLength) };
+  let offset = byteLength;
+
+  return {
+    header,
+    read<T>(Ctor: TypedArrayConstructor<T>, length: number): T {
+      const bytes = length * Ctor.BYTES_PER_ELEMENT;
+      if (offset + bytes > buffer.byteLength) {
+        throw new Error(
+          `Truncated world data blob: section of ${bytes} bytes at ${offset} runs past the end at ${buffer.byteLength}`,
+        );
+      }
+      const section = new Ctor(buffer, offset, length);
+      offset = align(offset + bytes);
+      return section;
+    },
+  };
 }

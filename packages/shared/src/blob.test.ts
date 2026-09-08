@@ -2,10 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   MAX_BLOB_COUNTS,
   WORLD_FORMAT_VERSION,
-  decodeBlob,
   decodeBlobHeader,
-  encodeBlob,
   encodeBlobHeader,
+  encodeSections,
+  readSections,
 } from './blob.ts';
 
 describe('the blob header', () => {
@@ -71,28 +71,43 @@ describe('the blob header', () => {
   });
 });
 
-describe('a blob', () => {
+describe('a sectioned blob', () => {
   const positions = Float32Array.from([1.5, -2.25, 3, 4, 5, 6]);
+  const colours = Uint8Array.from([1, 2, 3, 4, 5]);
   const indices = Uint32Array.from([0, 1, 2]);
 
-  it('round-trips its header and payload', () => {
-    const header = { chunk: { i: 12, j: -3 }, counts: [positions.length / 3, indices.length] };
-    const { header: decodedHeader, payload } = decodeBlob(encodeBlob(header, [positions, indices]));
+  it('round-trips its header and every section', () => {
+    const header = { chunk: { i: 12, j: -3 }, counts: [2, 5, 3] };
+    const blob = encodeSections(header, [positions, colours, indices]);
+    const sections = readSections(blob);
 
-    expect(decodedHeader).toEqual({ ...header, formatVersion: WORLD_FORMAT_VERSION });
-    expect(new Float32Array(payload.buffer, payload.byteOffset, positions.length)).toEqual(positions);
-    expect(
-      new Uint32Array(payload.buffer, payload.byteOffset + positions.byteLength, indices.length),
-    ).toEqual(indices);
+    expect(sections.header).toEqual({ ...header, formatVersion: WORLD_FORMAT_VERSION });
+    expect(sections.read(Float32Array, positions.length)).toEqual(positions);
+    expect(sections.read(Uint8Array, colours.length)).toEqual(colours);
+    expect(sections.read(Uint32Array, indices.length)).toEqual(indices);
   });
 
-  it('starts its payload on an eight-byte boundary for zero-copy views', () => {
-    const { payload } = decodeBlob(encodeBlob({ chunk: { i: 1, j: 1 }, counts: [1, 2, 3] }, [positions]));
-    expect(payload.byteOffset % 8).toBe(0);
+  // A section of bytes must not leave the section after it on an odd offset, or a typed
+  // array view onto it throws in the worker that parses the chunk.
+  it('starts every section on an eight-byte boundary, so views need no copy', () => {
+    const sections = readSections(
+      encodeSections({ chunk: { i: 1, j: 1 }, counts: [] }, [colours, positions, indices]),
+    );
+    expect(sections.read(Uint8Array, 5).byteOffset % 8).toBe(0);
+    expect(sections.read(Float32Array, 6).byteOffset % 8).toBe(0);
+    expect(sections.read(Uint32Array, 3).byteOffset % 8).toBe(0);
   });
 
-  it('round-trips an empty payload', () => {
-    const { payload } = decodeBlob(encodeBlob({ chunk: { i: 1, j: 1 }, counts: [0] }, []));
-    expect(payload.byteLength).toBe(0);
+  it('reads back sections that are empty', () => {
+    const sections = readSections(
+      encodeSections({ chunk: { i: 1, j: 1 }, counts: [0] }, [new Float32Array(0), indices]),
+    );
+    expect(sections.read(Float32Array, 0)).toHaveLength(0);
+    expect(sections.read(Uint32Array, 3)).toEqual(indices);
+  });
+
+  it('refuses to read past the end of the blob', () => {
+    const sections = readSections(encodeSections({ chunk: { i: 0, j: 0 }, counts: [] }, [indices]));
+    expect(() => sections.read(Uint32Array, 9)).toThrow(/truncated|past the end/i);
   });
 });
