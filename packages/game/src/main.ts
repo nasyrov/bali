@@ -8,7 +8,7 @@ import * as THREE from 'three';
 import { createBikeMesh } from './render/bike.ts';
 import { Controls } from './render/controls.ts';
 import { VIEW_DISTANCE, createLook, createRenderer } from './render/look.ts';
-import { createChunkView } from './render/roads.ts';
+import { createChunkView } from './render/chunk.ts';
 import { World } from './ride/world.ts';
 import { ChunkLoader } from './world/chunkLoader.ts';
 import { WorldRoot } from './world/worldRoot.ts';
@@ -38,7 +38,7 @@ const renderer = createRenderer();
 document.body.append(renderer.domElement);
 
 const camera = new THREE.PerspectiveCamera(60, 1, 0.5, VIEW_DISTANCE);
-const ground = look.scene.getObjectByName('ground')!;
+const sea = look.sea;
 
 const world = new World({ manifest, clock: Date });
 
@@ -52,8 +52,11 @@ const bikeMesh = createBikeMesh();
 look.scene.add(bikeMesh);
 
 const loader = new ChunkLoader(WORLD_ROOT, (parsed) => {
-  world.addGraph(parsed.graph);
+  // The view is built first, because it is what takes the terrain's buffers off the worker's
+  // transfer; the World then keeps the same arrays for its own height lookups.
   root.add(createChunkView(parsed, look, root.origin));
+  world.addTerrain(parsed.terrain);
+  world.addGraph(parsed.graph);
 });
 
 const hud = document.createElement('div');
@@ -81,6 +84,7 @@ renderer.setAnimationLoop(() => {
   for (const chunk of plan.unload) {
     loader.cancel(chunk);
     world.dropGraph(chunk);
+    world.dropTerrain(chunk);
     root.remove(chunkKey(chunk));
   }
 
@@ -97,11 +101,13 @@ renderer.setAnimationLoop(() => {
   }
 
   const ridden = root.toRenderSpace(world.bike);
-  bikeMesh.position.set(ridden.x, 0, ridden.z);
+  bikeMesh.position.set(ridden.x, world.bike.y, ridden.z);
   bikeMesh.rotation.set(0, -world.bike.heading, -world.bike.lean, 'YXZ');
 
-  // The ground plane stands in for terrain, so it simply follows the camera.
-  ground.position.set(camera.position.x, ground.position.y, camera.position.z);
+  // The sea is one plane at height zero for the whole world, so it follows the camera and
+  // shows wherever the terrain was clipped away at the coastline.
+  sea.position.set(camera.position.x, 0, camera.position.z);
+  look.shimmer(now / 1000);
 
   renderer.render(look.scene, camera);
 

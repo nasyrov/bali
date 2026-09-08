@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { WORLD_FORMAT_VERSION } from './blob.ts';
+import { TERRAIN_VERTICES, WALL_STRIDE, readWall } from './terrain.ts';
 import {
   MARKING_STRIDE,
   decodeGraphBlob,
   decodeRoadBlob,
+  decodeTerrainBlob,
   encodeGraphBlob,
   encodeRoadBlob,
+  encodeTerrainBlob,
   readMarking,
 } from './worldData.ts';
 import type { GraphEdge, GraphNode } from './worldData.ts';
@@ -68,6 +71,7 @@ describe('the graph blob', () => {
       lanes: 2,
       name: 'Jalan Raya Canggu',
       bridge: false,
+      tunnel: false,
       layer: 0,
     },
     {
@@ -83,6 +87,7 @@ describe('the graph blob', () => {
       lanes: 1,
       name: undefined,
       bridge: true,
+      tunnel: false,
       layer: 1,
     },
   ];
@@ -118,6 +123,7 @@ describe('the graph blob', () => {
       expect(edge.lanes).toBe(original.lanes);
       expect(edge.name).toBe(original.name);
       expect(edge.bridge).toBe(original.bridge);
+      expect(edge.tunnel).toBe(original.tunnel);
       expect(edge.layer).toBe(original.layer);
       expect(edge.points).toHaveLength(original.points.length);
     }
@@ -133,5 +139,43 @@ describe('the graph blob', () => {
     const decoded = decodeGraphBlob(encodeGraphBlob(chunk, [], []));
     expect(decoded.nodes).toEqual([]);
     expect(decoded.edges).toEqual([]);
+  });
+});
+
+describe('the terrain blob', () => {
+  const grid = {
+    heights: Float32Array.from({ length: TERRAIN_VERTICES }, (_unused, index) => index * 0.25),
+    waterLevels: Float32Array.from({ length: TERRAIN_VERTICES }, (_unused, index) => index * 0.25 + 1),
+    covers: Uint8Array.from({ length: TERRAIN_VERTICES }, (_unused, index) => index % 10),
+  };
+  const colours = Uint8Array.from({ length: TERRAIN_VERTICES * 3 }, (_unused, index) => index % 256);
+  const indices = Uint32Array.from([0, 34, 1, 1, 34, 35]);
+  const walls = [{ x1: -10, z1: 4, x2: -10, z2: 34, base: 12, top: 13.5 }];
+
+  it('round-trips the ground, its water, its colours and its walls', () => {
+    const decoded = decodeTerrainBlob(encodeTerrainBlob(chunk, grid, colours, indices, walls));
+
+    expect(decoded.chunk).toEqual(chunk);
+    expect(decoded.heights).toEqual(grid.heights);
+    expect(decoded.waterLevels).toEqual(grid.waterLevels);
+    expect(decoded.covers).toEqual(grid.covers);
+    expect(decoded.colours).toEqual(colours);
+    expect(decoded.indices).toEqual(indices);
+    expect(decoded.walls).toHaveLength(WALL_STRIDE);
+    expect(readWall(decoded.walls, 0)).toEqual(walls[0]);
+  });
+
+  it('states its counts in the header, so a reader can size buffers before parsing', () => {
+    const decoded = decodeTerrainBlob(encodeTerrainBlob(chunk, grid, colours, indices, walls));
+    expect(decoded.header.counts).toEqual([indices.length, walls.length]);
+    expect(decoded.header.formatVersion).toBe(WORLD_FORMAT_VERSION);
+  });
+
+  it('round-trips a chunk that is all sea, with nothing drawn on it', () => {
+    const decoded = decodeTerrainBlob(
+      encodeTerrainBlob(chunk, grid, colours, new Uint32Array(0), []),
+    );
+    expect(decoded.indices).toHaveLength(0);
+    expect(decoded.walls).toHaveLength(0);
   });
 });

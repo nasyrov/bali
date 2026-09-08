@@ -5,4 +5,5 @@ export * from './blob.ts';
 export * from './roads.ts';
 export * from './ride.ts';
 export * from './ribbon.ts';
+export * from './terrain.ts';
 export * from './worldData.ts';

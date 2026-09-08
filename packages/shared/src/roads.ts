@@ -143,3 +143,14 @@ export function roadHeight(cls: RoadClass): number {
 export function roadRank(cls: RoadClass): number {
   return RANK[cls];
 }
+
+/** How high one layer of bridge stands above the ground, in metres. */
+const BRIDGE_LAYER_HEIGHT = 5;
+
+/** How long the ramp is at each end of a bridge, in metres. */
+export const BRIDGE_RAMP_LENGTH = 12;
+
+/** How far a bridge of this layer rises above the terrain at its middle, in metres. */
+export function bridgeLift(layer: number): number {
+  return Math.max(1, Math.abs(layer)) * BRIDGE_LAYER_HEIGHT;
+}

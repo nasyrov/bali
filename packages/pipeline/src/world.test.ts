@@ -8,9 +8,15 @@ import {
   GRAPH_BLOB_FILE,
   MANIFEST_FILE,
   ROAD_BLOB_FILE,
+  TERRAIN_BLOB_FILE,
+  TERRAIN_GRID,
+  TERRAIN_VERTICES,
   WORLD_FORMAT_VERSION,
   decodeGraphBlob,
   decodeRoadBlob,
+  decodeTerrainBlob,
+  landCoverColour,
+  landCoverOf,
   MARKING_STRIDE,
   RIDE_START,
   RIDE_START_ROAD,
@@ -18,16 +24,29 @@ import {
   chunkKey,
   parseChunkKey,
   readMarking,
+  roadHeight,
   roadWidth,
+  terrainHeightAt,
   worldToChunk,
 } from '@bali-moto/shared';
-import type { GraphBlob, WorldManifest, WorldPoint } from '@bali-moto/shared';
+import type { GraphBlob, TerrainBlob, WorldManifest, WorldPoint } from '@bali-moto/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { fixtureBuild } from './config.ts';
 import { buildWorld, type WorldBuildResult } from './world.ts';
 
 /** The chunks the fixture block covers; ways reaching out of it spill into its neighbours. */
 const BLOCK_CHUNKS = ['x9_z21', 'x9_z22', 'x10_z21', 'x10_z22'];
+
+/** How far from a bridge or tunnel its own extra geometry reaches, in metres. */
+const BRIDGE_REACH = 20;
+
+/**
+ * How far a Road surface may stand over the ground under it, in metres. A Road lies flat
+ * across its own width while the ground it crosses does not, so on a 30 m terrain grid the low
+ * kerb of a Road cutting across a slope stands a little off the ground. What a Road may never
+ * do is sink under it.
+ */
+const KERB_CLEARANCE = 0.8;
 
 let root: string;
 let build: WorldBuildResult;
@@ -40,6 +59,10 @@ function readBlob(chunk: string, file: string): ArrayBuffer {
 
 function graphOf(chunk: string): GraphBlob {
   return decodeGraphBlob(readBlob(chunk, GRAPH_BLOB_FILE));
+}
+
+function terrainOf(chunk: string): TerrainBlob {
+  return decodeTerrainBlob(readBlob(chunk, TERRAIN_BLOB_FILE));
 }
 
 /** How far a point lies from a road segment, both in the same chunk's local metres. */
@@ -86,9 +109,9 @@ describe('the manifest', () => {
     }
   });
 
-  it('gives every chunk a road blob and a graph blob with their sizes on disk', () => {
+  it('gives every chunk its terrain, roads and graph with their sizes on disk', () => {
     for (const [key, files] of Object.entries(manifest.chunks)) {
-      expect(Object.keys(files).sort()).toEqual([GRAPH_BLOB_FILE, ROAD_BLOB_FILE]);
+      expect(Object.keys(files).sort()).toEqual([GRAPH_BLOB_FILE, ROAD_BLOB_FILE, TERRAIN_BLOB_FILE]);
       for (const [name, size] of Object.entries(files)) {
         expect(size).toBe(statSync(join(root, key, name)).size);
       }
@@ -135,6 +158,167 @@ describe('the road blobs', () => {
       }
     }
     expect(marks).toBeGreaterThan(0);
+  });
+});
+
+describe('the terrain blobs', () => {
+  it('carries a 34 by 34 height grid with a land cover class and a colour per vertex', () => {
+    for (const key of BLOCK_CHUNKS) {
+      const terrain = terrainOf(key);
+      expect(terrain.chunk).toEqual(parseChunkKey(key));
+      expect(terrain.heights).toHaveLength(TERRAIN_GRID * TERRAIN_GRID);
+      expect(terrain.heights).toHaveLength(TERRAIN_VERTICES);
+      expect(terrain.covers).toHaveLength(TERRAIN_VERTICES);
+      expect(terrain.colours).toHaveLength(TERRAIN_VERTICES * 3);
+
+      for (let vertex = 0; vertex < TERRAIN_VERTICES; vertex++) {
+        const colour = landCoverColour(landCoverOf(terrain.covers[vertex]!));
+        expect([
+          terrain.colours[vertex * 3],
+          terrain.colours[vertex * 3 + 1],
+          terrain.colours[vertex * 3 + 2],
+        ]).toEqual([(colour >> 16) & 0xff, (colour >> 8) & 0xff, colour & 0xff]);
+      }
+    }
+  });
+
+  it('draws the whole of an inland chunk, in triangles, at Canggu heights', () => {
+    for (const key of BLOCK_CHUNKS) {
+      const terrain = terrainOf(key);
+      // Every cell of the grid is drawn where none of it is at sea, which inland is all of it.
+      expect(terrain.indices.length).toBe((TERRAIN_GRID - 1) ** 2 * 6);
+      for (const height of terrain.heights) {
+        expect(height).toBeGreaterThan(0);
+        expect(height).toBeLessThan(120);
+      }
+    }
+  });
+
+  it('paints the countryside Canggu is made of, and never the sea inland', () => {
+    const covers = new Set(
+      BLOCK_CHUNKS.flatMap((key) => [...terrainOf(key).covers].map((cover) => landCoverOf(cover))),
+    );
+    expect(covers).toContain('paddy');
+    expect(covers).toContain('built');
+    expect(covers).not.toContain('sea');
+  });
+
+  it('gives two neighbouring chunks the same heights along the border they share', () => {
+    const west = terrainOf('x9_z21');
+    const east = terrainOf('x10_z21');
+
+    for (let row = 0; row < TERRAIN_GRID; row++) {
+      expect(east.heights[row * TERRAIN_GRID]).toBe(west.heights[row * TERRAIN_GRID + TERRAIN_GRID - 1]);
+    }
+  });
+
+  it('holds the ground dry inland, so nothing there reads as water', () => {
+    for (const key of BLOCK_CHUNKS) {
+      const terrain = terrainOf(key);
+      for (let vertex = 0; vertex < TERRAIN_VERTICES; vertex++) {
+        expect(terrain.waterLevels[vertex]).toBeGreaterThanOrEqual(terrain.heights[vertex]!);
+      }
+    }
+  });
+});
+
+describe('roads on the terrain', () => {
+  /** The vertices of a chunk's road surface, keyed by where they lie to the centimetre. */
+  function surfaceHeights(key: string): Map<string, number[]> {
+    const { positions } = decodeRoadBlob(readBlob(key, ROAD_BLOB_FILE));
+    const at = new Map<string, number[]>();
+    for (let index = 0; index < positions.length; index += 3) {
+      const place = `${positions[index]!.toFixed(2)}:${positions[index + 2]!.toFixed(2)}`;
+      const heights = at.get(place);
+      if (heights) heights.push(positions[index + 1]!);
+      else at.set(place, [positions[index + 1]!]);
+    }
+    return at;
+  }
+
+  // The whole point of flattening the ground under a Road before its heights are sampled: at
+  // every node of every Road there is a surface vertex, and it sits on the terrain the runtime
+  // will read there — at least the class's own few millimetres over it, and never far above.
+  it('lays every Road node on the flattened terrain beneath it', () => {
+    let checked = 0;
+
+    for (const key of BLOCK_CHUNKS) {
+      const terrain = terrainOf(key);
+      const surface = surfaceHeights(key);
+
+      for (const edge of graphOf(key).edges) {
+        if (edge.bridge || edge.tunnel) continue;
+        for (const point of edge.points) {
+          const vertices = surface.get(`${point.x.toFixed(2)}:${point.z.toFixed(2)}`);
+          if (!vertices) continue;
+
+          // Roads of different classes meeting at a node each leave a vertex here, each at its
+          // own class's lift; none of them is under the ground and none is far over it.
+          const ground = terrainHeightAt(terrain.heights, point.x, point.z);
+          const over = vertices.map((height) => height - ground);
+          expect(Math.min(...over)).toBeGreaterThan(0);
+          // Vertex positions are packed as 32-bit floats, so allow the last few microns of it.
+          expect(over.some((height) => height >= roadHeight(edge.cls) - 1e-3)).toBe(true);
+          expect(Math.max(...over)).toBeLessThan(KERB_CLEARANCE);
+          checked++;
+        }
+      }
+    }
+
+    expect(checked).toBeGreaterThan(100);
+  });
+
+  // No part of a Road may sink under the ground, or the ground eats bites out of the Road the
+  // shape of the triangles it is drawn as; nor may any of it float, bridges aside.
+  it('keeps the whole road surface on the ground except where a bridge climbs off it', () => {
+    // Bridges and tunnels are looked for across the whole block, in world metres: a bridge on
+    // a chunk border leaves its slab in one chunk and its graph edge in the next.
+    const raised = Object.keys(manifest.chunks).flatMap((key) => {
+      const centre = chunkCentre(parseChunkKey(key));
+      return graphOf(key)
+        .edges.filter((edge) => edge.bridge || edge.tunnel)
+        .map((edge) => edge.points.map((point) => ({ x: point.x + centre.x, z: point.z + centre.z })));
+    });
+
+    for (const key of BLOCK_CHUNKS) {
+      const terrain = terrainOf(key);
+      const centre = chunkCentre(parseChunkKey(key));
+      const { positions } = decodeRoadBlob(readBlob(key, ROAD_BLOB_FILE));
+
+      for (let index = 0; index < positions.length; index += 3) {
+        const x = positions[index]!;
+        const z = positions[index + 2]!;
+        const above = positions[index + 1]! - terrainHeightAt(terrain.heights, x, z);
+        if (above >= 0 && above < KERB_CLEARANCE) continue;
+
+        // Whatever is left is a bridge deck, its slab and railings, or a tunnel portal.
+        const point = { x: x + centre.x, z: z + centre.z };
+        const near = raised.some((points) =>
+          points.some((to, at) => at > 0 && distanceToSegment(point, points[at - 1]!, to) < BRIDGE_REACH),
+        );
+        expect(near).toBe(true);
+      }
+    }
+  });
+
+  it('raises a bridge clear of the ground it crosses', () => {
+    const bridges = BLOCK_CHUNKS.flatMap((key) =>
+      graphOf(key).edges.filter((edge) => edge.bridge).map((edge) => ({ key, edge })),
+    );
+    expect(bridges.length).toBeGreaterThan(0);
+
+    for (const { key, edge } of bridges) {
+      const terrain = terrainOf(key);
+      const { positions } = decodeRoadBlob(readBlob(key, ROAD_BLOB_FILE));
+      const middle = edge.points[Math.floor(edge.points.length / 2)]!;
+
+      let highest = -Infinity;
+      for (let index = 0; index < positions.length; index += 3) {
+        if (Math.hypot(positions[index]! - middle.x, positions[index + 2]! - middle.z) > edge.width) continue;
+        highest = Math.max(highest, positions[index + 1]!);
+      }
+      expect(highest).toBeGreaterThan(terrainHeightAt(terrain.heights, middle.x, middle.z));
+    }
   });
 });
 

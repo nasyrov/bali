@@ -1,11 +1,12 @@
 node_modules/
 dist/
 .DS_Store
-# OSM raw and bulk processed data; rebuilt with osmium (see docs/research/bali-osm-inventory.md)
+# OSM raw and bulk processed data; rebuilt with osmium (see docs/research/bali-osm-inventory.md),
+# and the Copernicus elevation tiles the build downloads
 data/raw/
 data/processed/*.pbf
 # except the Canggu sample, which the world build and the fixture are both cut from
-!data/processed/canggu-roads.osm.pbf
+!data/processed/canggu.osm.pbf
 data/processed/*.geojsonseq
 data/processed/*.gz
 
@@ -15,3 +16,4 @@ data/processed/*.gz
 *.tsbuildinfo
 coverage/
 .world-build/
+.fixture-build/

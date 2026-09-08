@@ -20,7 +20,7 @@
 import type { ChunkId } from './chunks.ts';
 
 /** Bumped whenever the layout of any blob changes; the runtime refuses other versions. */
-export const WORLD_FORMAT_VERSION = 1;
+export const WORLD_FORMAT_VERSION = 2;
 
 /**
  * Directory the pipeline writes world data into, at the repository root. The dev server

@@ -6,7 +6,7 @@
 
 import * as THREE from 'three';
 import type { WorldPoint } from '@bali-moto/shared';
-import type { ChunkView } from '../render/roads.ts';
+import type { ChunkView } from '../render/chunk.ts';
 import { nextRenderOrigin } from './rebasing.ts';
 
 export class WorldRoot {

@@ -1,13 +1,14 @@
-// Turning a parsed chunk into what three.js draws: one mesh for the road surface, carrying
-// the colours baked into it, and one instanced mesh for the markings. Two draw calls per
-// chunk. Everything hangs off a group positioned at the chunk's centre relative to the
-// current render origin, so rebasing is a matter of moving the groups.
+// Turning a parsed chunk into what three.js draws: the ground it stands on, one mesh for the
+// road surface carrying the colours baked into it, and one instanced mesh for the markings.
+// A handful of draw calls per chunk. Everything hangs off a group positioned at the chunk's
+// centre relative to the current render origin, so rebasing is a matter of moving the groups.
 
 import { MARKING_STRIDE, chunkCentre, parseChunkKey, readMarking } from '@bali-moto/shared';
 import type { WorldPoint } from '@bali-moto/shared';
 import * as THREE from 'three';
 import type { ParsedChunk } from '../world/chunkWorker.ts';
 import type { Look } from './look.ts';
+import { createTerrainParts } from './terrain.ts';
 
 /** A unit quad lying flat, scaled per instance into a dash or a line. */
 const MARKING_QUAD = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
@@ -27,6 +28,9 @@ export function createChunkView(chunk: ParsedChunk, look: Look, origin: WorldPoi
   const group = new THREE.Group();
   group.name = chunk.key;
   group.position.set(centre.x - origin.x, 0, centre.z - origin.z);
+
+  const terrain = createTerrainParts(chunk.terrain, look);
+  group.add(...terrain.objects);
 
   const surface = new THREE.BufferGeometry();
   surface.setAttribute('position', new THREE.BufferAttribute(chunk.positions, 3));
@@ -60,8 +64,9 @@ export function createChunkView(chunk: ParsedChunk, look: Look, origin: WorldPoi
     key: chunk.key,
     group,
     centre,
-    triangles: chunk.indices.length / 3 + markingCount * 2,
+    triangles: terrain.triangles + chunk.indices.length / 3 + markingCount * 2,
     dispose() {
+      terrain.dispose();
       surface.dispose();
       markings?.dispose();
     },
