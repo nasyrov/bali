@@ -152,9 +152,13 @@ function bakeChunk(chunk: ChunkId, placed: readonly Placed[]): ChunkBuild {
   };
 }
 
-/** Bake every chunk the ways reach into, in a stable order. */
+/**
+ * Bake every chunk the ways reach into. The order is by grid position rather than by key
+ * text, so it does not depend on the machine's collation: the manifest a build writes has to
+ * be byte-identical wherever it was built, or publishing by hash churns for no reason.
+ */
 export function bakeChunks(ways: readonly RoadWay[]): ChunkBuild[] {
-  return [...placePieces(ways)]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([, entry]) => bakeChunk(entry.chunk, entry.placed));
+  return [...placePieces(ways).values()]
+    .sort((a, b) => a.chunk.i - b.chunk.i || a.chunk.j - b.chunk.j)
+    .map((entry) => bakeChunk(entry.chunk, entry.placed));
 }
