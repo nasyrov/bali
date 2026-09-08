@@ -10,3 +10,9 @@ export const worldDir = resolve(repoRoot, WORLD_DATA_DIR);
 
 /** Checked-in and downloaded OpenStreetMap and elevation sources. */
 export const dataDir = resolve(repoRoot, 'data');
+
+/** The chunk block the checked-in Canggu fixture covers. */
+export const FIXTURE_BLOCK = { i0: 9, i1: 10, j0: 21, j1: 22 };
+
+/** The checked-in fixture the world data contract test builds. */
+export const FIXTURE_OSM = resolve(dataDir, 'fixtures/canggu.osm.pbf');

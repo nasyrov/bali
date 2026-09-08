@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "world": "node --experimental-strip-types src/world.ts"
+    "world": "node --experimental-strip-types src/world.ts",
+    "fixture": "node --experimental-strip-types src/fixture.ts"
   },
   "dependencies": {
     "@bali-moto/shared": "*"
